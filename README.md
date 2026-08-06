@@ -1,5 +1,8 @@
 # Minecraft Alpha 1.1.2_01 SMP — parity patch set
 
+# AI DISCLOSURE
+AI TOOLS SUCH AS CLAUDE CODE WERE HEAVILY USED IN THIS PROJECT. IF YOU ARE UNCOMFORTABLE WITH THAT, PLEASE AVOID USING THIS PROJECT.
+
 Multiplayer for Minecraft Alpha 1.1.2_01 that behaves like singleplayer:
 working damage, PvP, death and respawn, server-authoritative inventory and
 containers, crafting, furnaces, chests, bows and snowballs, boats, minecarts
