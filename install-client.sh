@@ -15,7 +15,14 @@ mkdir -p "$DEST"
 
 echo "[1/4] applying patch set to a copy of the pristine source tree"
 rm -rf "$DEST/src"; cp -r "$OONEY/source" "$DEST/src"
-( cd "$DEST/src" && git apply -p2 "$HERE/patches/client.patch" )
+# The throwaway `git init` is LOAD-BEARING: if this directory is inside some
+# enclosing git worktree (e.g. a clone of the project repo), `git apply` run
+# from a subdirectory resolves paths against THAT repo's root and silently
+# skips every file (exit 0, nothing applied). Making src its own repo pins
+# the path root here. Verified against a marker below.
+( cd "$DEST/src" && git init -q && git apply -p2 "$HERE/patches/client.patch" && rm -rf .git )
+grep -rq "PROTOCOL_VERSION = 100" "$DEST/src" \
+  || { echo "ERROR: patch did not apply (protocol marker missing)"; exit 1; }
 
 echo "[2/4] fetching libraries"
 "$HERE/fetch-client-libraries.sh" "$DEST"

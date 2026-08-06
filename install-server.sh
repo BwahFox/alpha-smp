@@ -16,7 +16,15 @@ echo "[1/4] reconstructing decompile baseline (deterministic; ~a minute)"
 
 echo "[2/4] applying patch set"
 rm -rf "$DEST/src"; cp -r "$DEST/baseline" "$DEST/src"
-( cd "$DEST/src" && git apply -p2 "$HERE/patches/server.patch" )
+# The throwaway `git init` is LOAD-BEARING: if this directory is inside some
+# enclosing git worktree (e.g. a clone of the project repo), `git apply` run
+# from a subdirectory resolves paths against THAT repo's root and silently
+# skips every file (exit 0, nothing applied). Making src its own repo pins
+# the path root here. Verified against a marker below in case git ever
+# changes behavior again.
+( cd "$DEST/src" && git init -q && git apply -p2 "$HERE/patches/server.patch" && rm -rf .git )
+grep -q "class BlockStairs" "$DEST/src/net/minecraft/src/BlockStairs.java" \
+  || { echo "ERROR: patch did not apply (BlockStairs marker missing)"; exit 1; }
 
 echo "[3/4] compiling"
 ( cd "$DEST/src"
