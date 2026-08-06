@@ -92,3 +92,4 @@ echo
 echo "ALL DONE."
 [ "$DO_SERVER" = 1 ] && echo "  server: $DEST/server/run-server.sh"
 [ "$DO_CLIENT" = 1 ] && echo "  client: $DEST/client/run-client.sh YourName"
+exit 0  # the && above is falsy when that side wasn't built; don't let it become the exit code
