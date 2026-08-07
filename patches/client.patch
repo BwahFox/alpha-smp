@@ -1739,7 +1739,7 @@ index b061483..265887b 100644
  			this.isJumping = false;
  			this.moveStrafing = 0.0F;
 diff --git a/baseline/net/minecraft/src/EntityMinecart.java b/ours/net/minecraft/src/EntityMinecart.java
-index c23a314..d3c02af 100644
+index c23a314..3f5deb5 100644
 --- a/baseline/net/minecraft/src/EntityMinecart.java
 +++ b/ours/net/minecraft/src/EntityMinecart.java
 @@ -65,7 +65,13 @@ public class EntityMinecart extends Entity implements IInventory {
@@ -1757,11 +1757,26 @@ index c23a314..d3c02af 100644
  			this.entityDropItem(Item.minecartEmpty.shiftedIndex, 1, 0.0F);
  			if(this.minecartType == 1) {
  				this.entityDropItem(Block.chest.blockID, 1, 0.0F);
-@@ -113,7 +119,17 @@ public class EntityMinecart extends Entity implements IInventory {
+@@ -113,7 +119,32 @@ public class EntityMinecart extends Entity implements IInventory {
  
  	public void onUpdate() {
  		double var7;
 -		if(this.worldObj.multiplayerWorld) {
++		// Hurt-shake decay belongs BEFORE any branching, where b1.7.3 has it: the
++		// C3 restructure left it only in the local-physics branch below, so for
++		// every cart on the interpolation path (any cart you are not riding, in
++		// MP) timeSinceHit froze at 10 and damageTaken ACCUMULATED per punch —
++		// the render wobble scales with damageTaken, hence "carts shake violently
++		// until you break them" (2026-08-07). Decrementing here and not also in
++		// the else keeps SP at exactly one decay per tick, as before.
++		if(this.timeSinceHit > 0) {
++			--this.timeSinceHit;
++		}
++
++		if(this.damageTaken > 0) {
++			--this.damageTaken;
++		}
++
 +		// PARITY C3: ONLY the cart ridden by the LOCAL player runs full local
 +		// physics (falls through to the SP branch below) — that is what makes
 +		// riding feel immediate; the server stays authoritative by force-ticking
@@ -1776,10 +1791,16 @@ index c23a314..d3c02af 100644
  			if(this.turnProgress > 0) {
  				double var41 = this.posX + (this.minecartX - this.posX) / (double)this.turnProgress;
  				double var42 = this.posY + (this.minecartY - this.posY) / (double)this.turnProgress;
-@@ -137,6 +153,28 @@ public class EntityMinecart extends Entity implements IInventory {
+@@ -137,12 +168,26 @@ public class EntityMinecart extends Entity implements IInventory {
  			}
  
  		} else {
+-			if(this.timeSinceHit > 0) {
+-				--this.timeSinceHit;
+-			}
+-
+-			if(this.damageTaken > 0) {
+-				--this.damageTaken;
 +			// PARITY C3: divergence bound for the cart WE are riding. Our local sim
 +			// ignores the tracker's positions by design (that is what makes riding
 +			// feel immediate), but the server's cart can be moved by things our sim
@@ -1800,12 +1821,10 @@ index c23a314..d3c02af 100644
 +				if(var47 * var47 + var48 * var48 + var49 * var49 > 9.0D) {
 +					this.setPosition(this.minecartX, this.minecartY, this.minecartZ);
 +				}
-+			}
-+
- 			if(this.timeSinceHit > 0) {
- 				--this.timeSinceHit;
  			}
-@@ -161,7 +199,7 @@ public class EntityMinecart extends Entity implements IInventory {
+ 
+ 			this.prevPosX = this.posX;
+@@ -161,7 +206,7 @@ public class EntityMinecart extends Entity implements IInventory {
  			var7 = 1.0D / 128.0D;
  			if(this.worldObj.getBlockId(var1, var2, var3) == Block.minecartTrack.blockID) {
  				Vec3D var9 = this.getPos(this.posX, this.posY, this.posZ);
@@ -1814,7 +1833,7 @@ index c23a314..d3c02af 100644
  				this.posY = (double)var2;
  				if(var10 >= 2 && var10 <= 5) {
  					this.posY = (double)(var2 + 1);
-@@ -396,6 +434,25 @@ public class EntityMinecart extends Entity implements IInventory {
+@@ -396,6 +441,25 @@ public class EntityMinecart extends Entity implements IInventory {
  		}
  	}
  
@@ -1840,7 +1859,7 @@ index c23a314..d3c02af 100644
  	public Vec3D getPosOffset(double var1, double var3, double var5, double var7) {
  		int var9 = MathHelper.floor_double(var1);
  		int var10 = MathHelper.floor_double(var3);
-@@ -405,7 +462,7 @@ public class EntityMinecart extends Entity implements IInventory {
+@@ -405,7 +469,7 @@ public class EntityMinecart extends Entity implements IInventory {
  		}
  
  		if(this.worldObj.getBlockId(var9, var10, var11) == Block.minecartTrack.blockID) {
@@ -1849,7 +1868,7 @@ index c23a314..d3c02af 100644
  			var3 = (double)var10;
  			if(var12 >= 2 && var12 <= 5) {
  				var3 = (double)(var10 + 1);
-@@ -440,7 +497,7 @@ public class EntityMinecart extends Entity implements IInventory {
+@@ -440,7 +504,7 @@ public class EntityMinecart extends Entity implements IInventory {
  		}
  
  		if(this.worldObj.getBlockId(var7, var8, var9) == Block.minecartTrack.blockID) {
@@ -5995,7 +6014,7 @@ index ecc1bba..e9a1abb 100644
  				System.out.println("Player count: " + this.playerEntities.size());
  			}
 diff --git a/baseline/net/minecraft/src/WorldClient.java b/ours/net/minecraft/src/WorldClient.java
-index 5bf8f0b..a598795 100644
+index 5bf8f0b..add0cf2 100644
 --- a/baseline/net/minecraft/src/WorldClient.java
 +++ b/ours/net/minecraft/src/WorldClient.java
 @@ -2,6 +2,7 @@ package net.minecraft.src;
@@ -6006,7 +6025,7 @@ index 5bf8f0b..a598795 100644
  import java.util.LinkedList;
  import java.util.Set;
  
-@@ -34,29 +35,73 @@ public class WorldClient extends World {
+@@ -34,29 +35,87 @@ public class WorldClient extends World {
  			}
  		}
  
@@ -6068,6 +6087,20 @@ index 5bf8f0b..a598795 100644
 +		while(!var6.isEmpty()) {
 +			WorldBlockPositionType var4 = (WorldBlockPositionType)var6.removeFirst();
 +			if(var4.posY >= 0 && var4.posY < 128 && this.blockExists(var4.posX, var4.posY, var4.posZ)) {
++				// Never restore an invalid rail shape. Rail placement writes a
++				// transient meta-15 sentinel (onBlockAdded) before the track logic
++				// computes the real 0-9, and the speculative-write capture above
++				// snapshots BETWEEN those writes — so an entry can hold (rail, 15),
++				// a state the server never had and never sends. Applying it is the
++				// prime suspect for the turned-rail AIOOBE (meta 15 on a rendered
++				// rail). Wire-truth for the cell either already arrived (invalidating
++				// this entry) or will; dropping the entry just keeps the current
++				// prediction. The [railmeta] line preserves the corruption hunt's
++				// evidence trail.
++				if(var4.blockID == Block.minecartTrack.blockID && (var4.metadata < 0 || var4.metadata > 9)) {
++					System.err.println("[railmeta] REVERT SKIPPED: entry captured rail meta " + var4.metadata + " at (" + var4.posX + "," + var4.posY + "," + var4.posZ + ") — transient placement sentinel, never wire-truth");
++					continue;
++				}
 +				this.getChunkFromChunkCoords(var4.posX >> 4, var4.posZ >> 4)
 +					.setBlockIDWithMetadataRaw(var4.posX & 15, var4.posY, var4.posZ & 15, var4.blockID, var4.metadata);
  				super.markBlockNeedsUpdate(var4.posX, var4.posY, var4.posZ);
@@ -6090,7 +6123,7 @@ index 5bf8f0b..a598795 100644
  			}
  		}
  
-@@ -123,13 +168,34 @@ public class WorldClient extends World {
+@@ -123,13 +182,34 @@ public class WorldClient extends World {
  
  	protected void releaseEntitySkin(Entity var1) {
  		super.releaseEntitySkin(var1);

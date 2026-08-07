@@ -6783,6 +6783,37 @@ index 434743e..3473cbe 100644
          throw new IllegalArgumentException("Don't know how to add " + this.a.getClass() + "!");
      }
  }
+diff --git a/baseline/net/minecraft/src/gd.java b/ours/net/minecraft/src/gd.java
+index b5f2e9d..9965efa 100644
+--- a/baseline/net/minecraft/src/gd.java
++++ b/ours/net/minecraft/src/gd.java
+@@ -191,6 +191,16 @@ class gd {
+             n2 = 0;
+         }
+         this.b.b(this.c, this.d, this.e, n2);
++        // Added by us: dy.b is the SILENT metadata setter — vanilla alpha's rail
++        // reshaping never reached the wire, so every neighbor rail a placement
++        // curved stayed straight on other clients (and the placer's own client
++        // REVERTED its correct prediction when no confirming 53 arrived — the
++        // rail-orientation desync). b1.7.3 routes these writes through
++        // setBlockMetadataWithNotify -> markBlockNeedsUpdate; f() is exactly that
++        // half. The neighbor-notify half is deliberately NOT added: the reshape
++        // algorithm updates every cell it changes itself, and vanilla alpha never
++        // notified here.
++        this.b.f(this.c, this.d, this.e);
+     }
+ 
+     private boolean c(int n2, int n3, int n4) {
+@@ -283,6 +293,9 @@ class gd {
+         this.f = n2;
+         this.a();
+         this.b.b(this.c, this.d, this.e, n2);
++        // Added by us: same as the write in b() above — mark the cell so the
++        // reshape reaches clients as packet 53.
++        this.b.f(this.c, this.d, this.e);
+         for (int i2 = 0; i2 < this.g.size(); ++i2) {
+             gd gd2 = this.a((gs)this.g.get(i2));
+             if (gd2 == null) continue;
 diff --git a/baseline/net/minecraft/src/gf.java b/ours/net/minecraft/src/gf.java
 index 1cc0e32..65c10e8 100644
 --- a/baseline/net/minecraft/src/gf.java
