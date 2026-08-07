@@ -64,6 +64,36 @@ provides the deobfuscated a1.1.2_01 workspace this patch set targets), a JDK
 Then Multiplayer → your server's address. Libraries are fetched from
 Mojang's and Maven Central's public repositories at pinned versions.
 
+## Windows and macOS
+
+Only the one-time BUILD is Unix-shaped; the jar it produces is ordinary
+portable Java and runs anywhere with Java 8+.
+
+**macOS** works as-is: install a JDK 17+ (e.g. Temurin) and git, then run
+`./bootstrap.sh` exactly as above — the scripts already handle the Mac
+differences (`shasum`, Darwin JDK download).
+
+**Windows**: build under WSL, run wherever you like.
+
+1. `wsl --install` in an admin terminal, then open Ubuntu.
+2. `sudo apt install default-jdk git curl unzip`, clone this repo (or unzip
+   the dist download from Releases), and run `./bootstrap.sh --server`.
+3. Either run the server inside WSL, or copy
+   `alpha-smp/server/minecraft_server_alpha-smp.jar` to the Windows side and
+   run it with any Windows Java:
+
+       java -Xmx2G -Xss512m -jar minecraft_server_alpha-smp.jar nogui
+
+   Running it with native Windows Java is the smoother option: WSL2 has its
+   own network namespace, so a server inside WSL is not reachable from your
+   LAN without a `netsh interface portproxy` rule (or WSL mirrored
+   networking), while native Java just listens on 25565 like anything else.
+
+Git Bash may survive the server build unaided but is untested — WSL is the
+supported route. `server.properties` and `ops.txt` behave like vanilla alpha
+hosting on every platform. Clients on Windows/macOS should simply use the
+Prism jarmod route below — no build needed at all.
+
 ## Mod authors
 
 The patch sets ARE the source: apply them and read the result. Client changes
