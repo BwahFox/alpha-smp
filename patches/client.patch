@@ -1,5 +1,5 @@
 diff --git a/baseline/net/minecraft/client/Minecraft.java b/ours/net/minecraft/client/Minecraft.java
-index b80a9e1..20e7fff 100644
+index b80a9e1..2a67eca 100644
 --- a/baseline/net/minecraft/client/Minecraft.java
 +++ b/ours/net/minecraft/client/Minecraft.java
 @@ -11,6 +11,8 @@ import java.io.File;
@@ -125,7 +125,7 @@ index b80a9e1..20e7fff 100644
  												}
  
  												if(this.isMultiplayerWorld() && Keyboard.getEventKey() == this.options.keyBindChat.keyCode) {
-@@ -1112,6 +1178,27 @@ public abstract class Minecraft implements Runnable {
+@@ -1112,6 +1178,40 @@ public abstract class Minecraft implements Runnable {
  	}
  
  	public void respawn() {
@@ -145,6 +145,19 @@ index b80a9e1..20e7fff 100644
 +				// entirely — no physics (floating in place), the death camera roll
 +				// keeps playing, and joinEntityInSurroundings re-adds it every tick.
 +				this.thePlayer.isDead = false;
++				// Fire does not survive death: the server resets its counter in the
++				// respawn handler, and this local counter — frozen mid-burn while
++				// the death screen was up — would otherwise resume drawing the
++				// first-person flames on the respawned player.
++				this.thePlayer.fire = 0;
++				// Re-obtain our own skin. The isDead sweep in updateEntities already
++				// released it (refcount 1 -> 0 deletes the texture AND the map
++				// entry), and this branch reuses the entity without going back
++				// through spawnEntityInWorld — so without this, the local player
++				// rendered the default skin for the rest of the session after any
++				// death ("the client can't see its own skin", 2026-08-07). Other
++				// clients were never affected: they hold their own copies of us.
++				this.renderGlobal.obtainEntitySkin(this.thePlayer);
 +			}
 +
 +			return;
@@ -265,10 +278,36 @@ index 8b02c5f..56ccaf8 100644
  		return true;
  	}
 diff --git a/baseline/net/minecraft/src/Chunk.java b/ours/net/minecraft/src/Chunk.java
-index fdda2cb..8bda10b 100644
+index fdda2cb..386e234 100644
 --- a/baseline/net/minecraft/src/Chunk.java
 +++ b/ours/net/minecraft/src/Chunk.java
-@@ -246,6 +246,45 @@ public class Chunk {
+@@ -211,7 +211,25 @@ public class Chunk {
+ 		return this.blocks[var1 << 11 | var3 << 7 | var2];
+ 	}
+ 
++
++	/**
++	 * Writer tripwire for the 2026-08-07 turned-rail crash: a rail cell was
++	 * seen with metadata 15 client-side (matrix AIOOBE in EntityMinecart) and
++	 * no writer has been caught yet. Every metadata store funnels through this
++	 * chunk, so shout WITH A STACK the moment anyone stores an out-of-range
++	 * shape on a rail -- the next occurrence names the culprit. Costs one
++	 * compare per metadata write; stays in permanently, like the
++	 * blocksToReceive telemetry.
++	 */
++	private void checkRailMetaWrite(int x, int y, int z, int id, int meta) {
++		if(id == Block.minecartTrack.blockID && (meta < 0 || meta > 9)) {
++			System.err.println("[railmeta] WRITING invalid rail metadata " + meta + " at (" + (this.xPosition * 16 + x) + "," + y + "," + (this.zPosition * 16 + z) + ") -- the turned-rail corruption writer:");
++			Thread.dumpStack();
++		}
++	}
++
+ 	public boolean setBlockIDWithMetadata(int var1, int var2, int var3, int var4, int var5) {
++		this.checkRailMetaWrite(var1, var2, var3, var4, var5);
+ 		byte var6 = (byte)var4;
+ 		int var7 = this.heightMap[var3 << 4 | var1] & 255;
+ 		int var8 = this.blocks[var1 << 11 | var3 << 7 | var2] & 255;
+@@ -246,6 +264,46 @@ public class Chunk {
  		}
  	}
  
@@ -285,6 +324,7 @@ index fdda2cb..8bda10b 100644
 +	 * blocks carry no MP guards of their own.
 +	 */
 +	public boolean setBlockIDWithMetadataRaw(int var1, int var2, int var3, int var4, int var5) {
++		this.checkRailMetaWrite(var1, var2, var3, var4, var5);
 +		byte var6 = (byte)var4;
 +		int var7 = this.heightMap[var3 << 4 | var1] & 255;
 +		int var8 = this.blocks[var1 << 11 | var3 << 7 | var2] & 255;
@@ -314,6 +354,14 @@ index fdda2cb..8bda10b 100644
  	public boolean setBlockID(int var1, int var2, int var3, int var4) {
  		byte var5 = (byte)var4;
  		int var6 = this.heightMap[var3 << 4 | var1] & 255;
+@@ -286,6 +344,7 @@ public class Chunk {
+ 	}
+ 
+ 	public void setBlockMetadata(int var1, int var2, int var3, int var4) {
++		this.checkRailMetaWrite(var1, var2, var3, this.getBlockID(var1, var2, var3), var4);
+ 		this.isModified = true;
+ 		this.data.set(var1, var2, var3, var4);
+ 	}
 diff --git a/ours/net/minecraft/src/Container.java b/ours/net/minecraft/src/Container.java
 new file mode 100644
 index 0000000..e4d78dc
@@ -1102,7 +1150,7 @@ index 6e2ed0b..e92c898 100644
  			Block var5 = Block.blocksList[var4];
  			byte var6 = 4;
 diff --git a/baseline/net/minecraft/src/Entity.java b/ours/net/minecraft/src/Entity.java
-index 1307f8e..5eaa71f 100644
+index 1307f8e..519f117 100644
 --- a/baseline/net/minecraft/src/Entity.java
 +++ b/ours/net/minecraft/src/Entity.java
 @@ -67,11 +67,37 @@ public abstract class Entity {
@@ -1143,7 +1191,7 @@ index 1307f8e..5eaa71f 100644
  	public boolean equals(Object var1) {
  		return var1 instanceof Entity ? ((Entity)var1).entityID == this.entityID : false;
  	}
-@@ -205,6 +231,20 @@ public abstract class Entity {
+@@ -205,6 +231,23 @@ public abstract class Entity {
  		this.firstUpdate = false;
  	}
  
@@ -1153,9 +1201,12 @@ index 1307f8e..5eaa71f 100644
 +	 * bit 0 of the watched flags byte instead. Checked at read time rather than
 +	 * mirrored into `fire` on a tick: the fire countdown calls attackEntityFrom every
 +	 * 20 ticks, which on a remote entity would add spurious hurt flashes on top of
-+	 * the real packet-38 ones. Our OWN player never receives its metadata (the
-+	 * tracker excludes it), so the local `fire` field keeps the first-person overlay
-+	 * working through the first clause.
++	 * the real packet-38 ones. Our OWN player is excluded from the tracker's watcher
++	 * sets, but the server now sends changed metadata to the entity itself too (fy's
++	 * self-send; matched by serverEntityId in handleEntityMetadata), so bit 0 covers
++	 * server-owned fire on ourselves — fire carried across events the local `fire`
++	 * sim can't see. The local field still drives the first clause for instant
++	 * feedback when we walk into flames.
 +	 */
 +	public boolean isBurning() {
 +		return this.fire > 0 || (this.worldObj.multiplayerWorld && (this.dataWatcher.getWatchableObjectByte(0) & 1) != 0);
@@ -1164,7 +1215,7 @@ index 1307f8e..5eaa71f 100644
  	protected void kill() {
  		this.setEntityDead();
  	}
-@@ -607,6 +647,13 @@ public abstract class Entity {
+@@ -607,6 +650,13 @@ public abstract class Entity {
  		return false;
  	}
  
@@ -1627,7 +1678,7 @@ index b061483..ace6056 100644
  		return 1.0F;
  	}
 diff --git a/baseline/net/minecraft/src/EntityMinecart.java b/ours/net/minecraft/src/EntityMinecart.java
-index c23a314..984af6d 100644
+index c23a314..d3c02af 100644
 --- a/baseline/net/minecraft/src/EntityMinecart.java
 +++ b/ours/net/minecraft/src/EntityMinecart.java
 @@ -65,7 +65,13 @@ public class EntityMinecart extends Entity implements IInventory {
@@ -1693,6 +1744,59 @@ index c23a314..984af6d 100644
  			if(this.timeSinceHit > 0) {
  				--this.timeSinceHit;
  			}
+@@ -161,7 +199,7 @@ public class EntityMinecart extends Entity implements IInventory {
+ 			var7 = 1.0D / 128.0D;
+ 			if(this.worldObj.getBlockId(var1, var2, var3) == Block.minecartTrack.blockID) {
+ 				Vec3D var9 = this.getPos(this.posX, this.posY, this.posZ);
+-				int var10 = this.worldObj.getBlockMetadata(var1, var2, var3);
++				int var10 = checkRailMeta(this.worldObj.getBlockMetadata(var1, var2, var3), var1, var2, var3);
+ 				this.posY = (double)var2;
+ 				if(var10 >= 2 && var10 <= 5) {
+ 					this.posY = (double)(var2 + 1);
+@@ -396,6 +434,25 @@ public class EntityMinecart extends Entity implements IInventory {
+ 		}
+ 	}
+ 
++
++	/**
++	 * A rail's metadata must be a matrix index (0-9). A real client crashed on
++	 * matrix[15] (2026-08-07, RenderMinecart -> getPos, AIOOBE: 15 -- 12-15 is
++	 * an open upper DOOR half's meta, so something smeared foreign metadata
++	 * onto a rail cell client-side; both world files scanned clean, so it is
++	 * transient). Until the writer is caught (see the Chunk tripwire), treat an
++	 * out-of-range value as shape 0 and shout -- never index the matrix raw.
++	 */
++	private static int checkRailMeta(int meta, int x, int y, int z) {
++		if(meta >= 0 && meta < matrix.length) {
++			return meta;
++		}
++
++		System.err.println("[railmeta] INVALID rail metadata " + meta + " at (" + x + "," + y + "," + z + ") -- treating as straight; see HANDOFF");
++		Thread.dumpStack();
++		return 0;
++	}
++
+ 	public Vec3D getPosOffset(double var1, double var3, double var5, double var7) {
+ 		int var9 = MathHelper.floor_double(var1);
+ 		int var10 = MathHelper.floor_double(var3);
+@@ -405,7 +462,7 @@ public class EntityMinecart extends Entity implements IInventory {
+ 		}
+ 
+ 		if(this.worldObj.getBlockId(var9, var10, var11) == Block.minecartTrack.blockID) {
+-			int var12 = this.worldObj.getBlockMetadata(var9, var10, var11);
++			int var12 = checkRailMeta(this.worldObj.getBlockMetadata(var9, var10, var11), var9, var10, var11);
+ 			var3 = (double)var10;
+ 			if(var12 >= 2 && var12 <= 5) {
+ 				var3 = (double)(var10 + 1);
+@@ -440,7 +497,7 @@ public class EntityMinecart extends Entity implements IInventory {
+ 		}
+ 
+ 		if(this.worldObj.getBlockId(var7, var8, var9) == Block.minecartTrack.blockID) {
+-			int var10 = this.worldObj.getBlockMetadata(var7, var8, var9);
++			int var10 = checkRailMeta(this.worldObj.getBlockMetadata(var7, var8, var9), var7, var8, var9);
+ 			var3 = (double)var8;
+ 			if(var10 >= 2 && var10 <= 5) {
+ 				var3 = (double)(var8 + 1);
 diff --git a/baseline/net/minecraft/src/EntityOtherPlayerMP.java b/ours/net/minecraft/src/EntityOtherPlayerMP.java
 index c3e6084..f869707 100644
 --- a/baseline/net/minecraft/src/EntityOtherPlayerMP.java
@@ -3198,6 +3302,22 @@ index e7ef4ab..0c2f647 100644
  		if(var3.getBlockId(var4, var5, var6) == Block.jukebox.blockID && var3.getBlockMetadata(var4, var5, var6) == 0) {
  			var3.setBlockMetadataWithNotify(var4, var5, var6, this.shiftedIndex - Item.record13.shiftedIndex + 1);
  			var3.playRecord(this.recordName, var4, var5, var6);
+diff --git a/baseline/net/minecraft/src/ItemRenderer.java b/ours/net/minecraft/src/ItemRenderer.java
+index aaf7e02..9c72b31 100644
+--- a/baseline/net/minecraft/src/ItemRenderer.java
++++ b/ours/net/minecraft/src/ItemRenderer.java
+@@ -194,7 +194,10 @@ public class ItemRenderer {
+ 	public void renderOverlays(float var1) {
+ 		GL11.glDisable(GL11.GL_ALPHA_TEST);
+ 		int var2;
+-		if(this.mc.thePlayer.fire > 0) {
++		// isBurning(), not the raw fire field: in MP the server owns fire, and our
++		// own burning arrives as the watched flags bit (fy's self-send) — the local
++		// fire counter only knows about flames this client walked into itself
++		if(this.mc.thePlayer.isBurning()) {
+ 			var2 = this.mc.renderEngine.getTexture("/terrain.png");
+ 			GL11.glBindTexture(GL11.GL_TEXTURE_2D, var2);
+ 			this.renderFireInFirstPerson(var1);
 diff --git a/baseline/net/minecraft/src/ItemSnowball.java b/ours/net/minecraft/src/ItemSnowball.java
 index c6514f8..e03cbdf 100644
 --- a/baseline/net/minecraft/src/ItemSnowball.java
@@ -3218,7 +3338,7 @@ index c6514f8..e03cbdf 100644
  	}
  }
 diff --git a/baseline/net/minecraft/src/NetClientHandler.java b/ours/net/minecraft/src/NetClientHandler.java
-index a015570..d6c195e 100644
+index a015570..72a273a 100644
 --- a/baseline/net/minecraft/src/NetClientHandler.java
 +++ b/ours/net/minecraft/src/NetClientHandler.java
 @@ -6,6 +6,7 @@ import java.io.InputStreamReader;
@@ -3354,7 +3474,7 @@ index a015570..d6c195e 100644
  	public void disconnect() {
  		this.disconnected = true;
  		this.netManager.networkShutdown("Closed");
-@@ -320,18 +394,300 @@ public class NetClientHandler extends NetHandler {
+@@ -320,18 +394,306 @@ public class NetClientHandler extends NetHandler {
  		this.mc.theWorld.setWorldTime(var1.time);
  	}
  
@@ -3455,6 +3575,12 @@ index a015570..d6c195e 100644
 +	 */
 +	public void handleEntityMetadata(Packet40EntityMetadata var1) {
 +		Entity var2 = this.worldClient.getEntityByID(var1.entityId);
++		// our own player is never in the server-id table, so match it explicitly —
++		// the server sends us our own flags byte (fire bit) via fy's self-send
++		if(var2 == null && this.mc.thePlayer != null && this.mc.thePlayer.serverEntityId == var1.entityId) {
++			var2 = this.mc.thePlayer;
++		}
++
 +		if(var2 != null && var1.getMetadata() != null) {
 +			var2.dataWatcher.updateWatchedObjectsFromList(var1.getMetadata());
 +		}
@@ -5794,7 +5920,7 @@ index ecc1bba..e9a1abb 100644
  				System.out.println("Player count: " + this.playerEntities.size());
  			}
 diff --git a/baseline/net/minecraft/src/WorldClient.java b/ours/net/minecraft/src/WorldClient.java
-index 5bf8f0b..b7ee4ad 100644
+index 5bf8f0b..a598795 100644
 --- a/baseline/net/minecraft/src/WorldClient.java
 +++ b/ours/net/minecraft/src/WorldClient.java
 @@ -2,6 +2,7 @@ package net.minecraft.src;
@@ -5889,7 +6015,7 @@ index 5bf8f0b..b7ee4ad 100644
  			}
  		}
  
-@@ -123,13 +168,26 @@ public class WorldClient extends World {
+@@ -123,13 +168,34 @@ public class WorldClient extends World {
  
  	protected void releaseEntitySkin(Entity var1) {
  		super.releaseEntitySkin(var1);
@@ -5900,7 +6026,15 @@ index 5bf8f0b..b7ee4ad 100644
 +		// playerEntities every single time and re-fetched its skin. That is what makes
 +		// the client's "Player count" climb forever and eventually earns an HTTP 429
 +		// from Mojang's session server.
-+		if(this.entityList.contains(var1) && !(var1 instanceof EntityPlayerSP)) {
++		// ...and never re-queue a DEAD entity either. A remote player's corpse
++		// (deathTime topple sets isDead client-side) stays in entityList until the
++		// server's destroy packet arrives, so updateEntities' isDead sweep released
++		// its skin, this re-queued it, the queue re-spawned it, the sweep released
++		// it again — a 20Hz release/re-download loop per dead player that
++		// hammered minotar into a 429, after which EVERY skin fetch this session
++		// silently failed ("skins won't render after a death", 2026-08-07). The
++		// re-queue exists for chunk-unload releases of LIVE entities only.
++		if(this.entityList.contains(var1) && !var1.isDead && !(var1 instanceof EntityPlayerSP)) {
  			this.entitySpawnQueue.add(var1);
  		}
  

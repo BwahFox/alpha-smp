@@ -1,5 +1,5 @@
 diff --git a/baseline/net/minecraft/server/MinecraftServer.java b/ours/net/minecraft/server/MinecraftServer.java
-index e7c980d..5763aad 100644
+index e7c980d..87cd3a8 100644
 --- a/baseline/net/minecraft/server/MinecraftServer.java
 +++ b/ours/net/minecraft/server/MinecraftServer.java
 @@ -14,6 +14,8 @@ import java.util.List;
@@ -225,7 +225,7 @@ index e7c980d..5763aad 100644
                  continue;
              }
              if (string.toLowerCase().startsWith("tp ")) {
-@@ -361,7 +400,398 @@ Runnable {
+@@ -361,7 +400,440 @@ Runnable {
                      this.a(string2, "Teleporting " + stringArray[1] + " to " + stringArray[2] + ".");
                      continue;
                  }
@@ -535,6 +535,15 @@ index e7c980d..5763aad 100644
 +                    ef2.b("ignite must be issued by a player in-game.");
 +                    continue;
 +                }
++                // "/ignite self": light the ISSUER instead — the debug trigger for
++                // server-owned player fire (the packet-40 self-send, the fire
++                // overlay on your own screen, and the respawn fire reset), which
++                // no non-player ignition can exercise
++                if (stringArray.length >= 2 && stringArray[1].equalsIgnoreCase("self")) {
++                    dbgIgnitePlayer.U = 600;
++                    this.a(string2, "You are on fire (600 ticks).");
++                    continue;
++                }
 +                int igniteRadius = 8;
 +                if (stringArray.length >= 2) {
 +                    try {
@@ -556,6 +565,39 @@ index e7c980d..5763aad 100644
 +                    ++ignitedCount;
 +                }
 +                this.a(string2, "Set " + ignitedCount + " entities on fire.");
++                continue;
++            }
++            if (string.toLowerCase().startsWith("mount ")) {
++                // debug trigger: put the NAMED player into the nearest minecart or
++                // boat within 8 blocks (e() toggles, so a mounted target dismounts).
++                // Exists so a headless bot can drive a REAL client into a ride —
++                // added while chasing the turned-rail crash (2026-08-07), where the
++                // rider path can only be exercised by an actual rendering client.
++                stringArray = string.split(" ");
++                if (stringArray.length == 2) {
++                    ea mountTarget = this.f.h(stringArray[1]);
++                    if (mountTarget == null) {
++                        ef2.b("mount: no such player.");
++                        continue;
++                    }
++                    dj mountVehicle = null;
++                    double mountBest = 64.0;
++                    List mountList = this.e.b(mountTarget, dg.b(mountTarget.l - 8, mountTarget.m - 8, mountTarget.n - 8, mountTarget.l + 8, mountTarget.m + 8, mountTarget.n + 8));
++                    for (int mi = 0; mi < mountList.size(); ++mi) {
++                        dj cand = (dj)mountList.get(mi);
++                        if (!(cand instanceof ih) && !(cand instanceof es)) continue;
++                        double dd = (cand.l - mountTarget.l) * (cand.l - mountTarget.l) + (cand.n - mountTarget.n) * (cand.n - mountTarget.n);
++                        if (dd >= mountBest) continue;
++                        mountBest = dd;
++                        mountVehicle = cand;
++                    }
++                    if (mountVehicle == null) {
++                        ef2.b("mount: no cart or boat within 8 blocks of " + mountTarget.aq);
++                        continue;
++                    }
++                    mountTarget.e(mountVehicle);
++                    this.a(string2, "Mounted " + mountTarget.aq + ".");
++                }
 +                continue;
 +            }
 +            if (string.toLowerCase().startsWith("arrow")) {
@@ -625,7 +667,7 @@ index e7c980d..5763aad 100644
                  continue;
              }
              if (string.toLowerCase().startsWith("give ")) {
-@@ -443,7 +873,36 @@ Runnable {
+@@ -443,7 +915,36 @@ Runnable {
  
      public static void main(String[] stringArray) {
          try {
@@ -4761,7 +4803,7 @@ index a09b14a..95779ac 100644
          return this.f > 0;
      }
 diff --git a/baseline/net/minecraft/src/dj.java b/ours/net/minecraft/src/dj.java
-index 3546f27..a95cea2 100644
+index 3546f27..5eaebcb 100644
 --- a/baseline/net/minecraft/src/dj.java
 +++ b/ours/net/minecraft/src/dj.java
 @@ -66,9 +66,46 @@ public abstract class dj {
@@ -4826,7 +4868,23 @@ index 3546f27..a95cea2 100644
          if (this.m < -64.0) {
              this.l();
          }
-@@ -324,9 +369,9 @@ public abstract class dj {
+@@ -294,14 +339,7 @@ public abstract class dj {
+         this.y = d9 != d3;
+         this.w = d9 != d3 && d9 < 0.0;
+         boolean bl4 = this.z = this.x || this.y;
+-        if (this.w) {
+-            if (this.I > 0.0f) {
+-                this.a(this.I);
+-                this.I = 0.0f;
+-            }
+-        } else if (d3 < 0.0) {
+-            this.I = (float)((double)this.I - d3);
+-        }
++        this.updateFallState(d3, this.w);
+         if (d8 != d2) {
+             this.o = 0.0;
+         }
+@@ -324,9 +362,9 @@ public abstract class dj {
                  bq bq2 = ff.n[n3].bl;
                  if (this.h.a(n6, n2 + 1, n7) == ff.aT.bc) {
                      bq2 = ff.aT.bl;
@@ -4838,7 +4896,32 @@ index 3546f27..a95cea2 100644
                  }
                  ff.n[n3].b(this.h, n6, n2, n7, this);
              }
-@@ -675,6 +720,14 @@ public abstract class dj {
+@@ -365,6 +403,24 @@ public abstract class dj {
+         }
+     }
+ 
++    // Extracted from c() above so ea can neutralize it, exactly as b1.7.3's
++    // EntityPlayerMP overrides updateFallState empty: a server player's fall
++    // distance must be driven ONLY by the client's claimed movement deltas
++    // (ea.handleFalling, called from id's movement handler), never by replayed
++    // or simulated moveEntity motion. Inlined vanilla behavior is unchanged for
++    // every other entity: land when a downward move was clamped, else
++    // accumulate the descent.
++    protected void updateFallState(double dy, boolean landed) {
++        if (landed) {
++            if (this.I > 0.0f) {
++                this.a(this.I);
++                this.I = 0.0f;
++            }
++        } else if (dy < 0.0) {
++            this.I = (float)((double)this.I - dy);
++        }
++    }
++
+     public boolean m() {
+         return false;
+     }
+@@ -675,6 +731,14 @@ public abstract class dj {
          this.f.a(this.l, this.m + this.h() + this.f.x(), this.n);
      }
  
@@ -5115,7 +5198,7 @@ index 8471de5..766e256 100644
      }
  
 diff --git a/baseline/net/minecraft/src/ea.java b/ours/net/minecraft/src/ea.java
-index 6f7dd7f..efb42a4 100644
+index 6f7dd7f..ee9be4b 100644
 --- a/baseline/net/minecraft/src/ea.java
 +++ b/ours/net/minecraft/src/ea.java
 @@ -6,7 +6,7 @@ import java.util.List;
@@ -5148,7 +5231,7 @@ index 6f7dd7f..efb42a4 100644
  
     public ea(MinecraftServer var1, dy var2, String var3, in var4) {
        super(var2);
-@@ -30,25 +44,203 @@ public class ea extends fc {
+@@ -30,25 +44,225 @@ public class ea extends fc {
        this.C = 0.0F;
     }
  
@@ -5178,18 +5261,40 @@ index 6f7dd7f..efb42a4 100644
 +      double pz = this.n;
 +      float yaw = this.r;
 +      float pitch = this.s;
-+      // onGround and fallDistance are client-claimed movement state (id sets w
-+      // from every packet's flag and the landing branch consumes I); the physics
-+      // inside i() recomputes both from a position delta we are about to discard,
-+      // and an airborne verdict would slow digging 5x (getCurrentPlayerStrVsBlock).
-+      // Pre-D1 the handler re-stamped w after every per-packet tick, so the
-+      // tick's verdict never survived — preserve that invariant.
++      // onGround is client-claimed movement state (id sets w from every packet's
++      // flag); the physics inside i() recomputes it from a position delta we are
++      // about to discard, and an airborne verdict would slow digging 5x
++      // (getCurrentPlayerStrVsBlock). Pre-D1 the handler re-stamped w after every
++      // per-packet tick, so the tick's verdict never survived — preserve that
++      // invariant. fallDistance needs no save/restore here anymore: the empty
++      // updateFallState override below stops the tick's physics from ever
++      // accumulating or consuming it, while the tick's LEGITIMATE resets (the
++      // in-water zero in dj's update, the ladder zero in is.c) — which the old
++      // blanket restore silently discarded, so water never broke a fall — now
++      // stick. Fall accounting is purely packet-driven via handleFalling.
 +      boolean grounded = this.w;
-+      float fall = this.I;
 +      this.i();
 +      this.b(px, py, pz, yaw, pitch);
 +      this.w = grounded;
-+      this.I = fall;
++   }
++
++   /**
++    * b1.7.3's scheme, verbatim (see NSSS EntityPlayerMP): the base
++    * updateFallState is neutralized so neither the discarded physics tick nor
++    * the replay of a movement packet through moveEntity can touch this player's
++    * fall distance — the old replay-side accounting both inflated it (the
++    * tick's simulated gravity landing on terrain the client never touched
++    * could consume/apply it mid-fall) and double-applied damage. id's movement
++    * handler calls handleFalling once per packet with the CLAIMED y delta and
++    * the CLAIMED onGround flag, which are the only ground truth the server has
++    * for a client-owned position.
++    */
++   @Override
++   protected void updateFallState(double dy, boolean landed) {
++   }
++
++   public void handleFalling(double dy, boolean landed) {
++      super.updateFallState(dy, landed);
 +   }
 +
 +   /**
@@ -5237,8 +5342,8 @@ index 6f7dd7f..efb42a4 100644
 +         }
 +      }
 +      this.b.f.b(this);
-    }
- 
++   }
++
 +   /**
 +    * PARITY C3: mounting/dismounting a player is broadcast as packet 39. The
 +    * ONE sender in the codebase, called from the interact path (super.e toggles:
@@ -5274,8 +5379,8 @@ index 6f7dd7f..efb42a4 100644
 +      if (this.g instanceof ih || this.g instanceof es) {
 +         this.a.b(new PacketEntityVelocity(this.g.c, this.g.o, this.g.p, this.g.q));
 +      }
-+   }
-+
+    }
+ 
 +   /**
 +    * onDeath. Another vanilla stub — this is why players never dropped their
 +    * inventory in SMP. EntityPlayer.onDeath does the dropping, and also shrinks the
@@ -5352,7 +5457,7 @@ index 6f7dd7f..efb42a4 100644
        iy var1 = null;
        double var2 = 0.0;
  
-@@ -114,4 +306,78 @@ public class ea extends fc {
+@@ -114,4 +328,78 @@ public class ea extends fc {
     protected float p() {
        return 1.62F;
     }
@@ -6477,7 +6582,7 @@ index f51fd2c..c0e6ec1 100644
          dataOutputStream.writeFloat(this.f);
          super.a(dataOutputStream);
 diff --git a/baseline/net/minecraft/src/fy.java b/ours/net/minecraft/src/fy.java
-index 434743e..d95ea3c 100644
+index 434743e..a42b51e 100644
 --- a/baseline/net/minecraft/src/fy.java
 +++ b/ours/net/minecraft/src/fy.java
 @@ -23,6 +23,11 @@ public class fy {
@@ -6510,7 +6615,7 @@ index 434743e..d95ea3c 100644
              if (hp2 != null) {
                  this.a(hp2);
              }
-@@ -78,10 +92,35 @@ public class fy {
+@@ -78,10 +92,46 @@ public class fy {
              this.g = n5;
              this.h = n6;
          }
@@ -6518,7 +6623,18 @@ index 434743e..d95ea3c 100644
 +        // position cadence above (this.c is 3 ticks for some entity types). A creeper
 +        // swelling is a 30-tick warning; losing a third of it to batching matters.
 +        if (this.a.dataWatcher.hasObjectChanged()) {
-+            this.a(new PacketEntityMetadata(this.a.c, this.a.dataWatcher, false));
++            PacketEntityMetadata metadataPacket = new PacketEntityMetadata(this.a.c, this.a.dataWatcher, false);
++            this.a(metadataPacket);
++            // The tracker structurally excludes an entity's own player (see the
++            // guards in fw and a(ea) below), so a player never heard their OWN
++            // flags byte — meaning fire the SERVER owns (respawn carry-over
++            // before that was fixed, /ignite self, anything the client can't
++            // re-derive locally) rendered no first-person overlay and no flames.
++            // Send the same changed-values packet to the entity itself when it
++            // has a connection; the client matches it by serverEntityId.
++            if (this.a instanceof ea) {
++                ((ea)this.a).a.b(metadataPacket);
++            }
 +        }
 +        // PARITY C2: b1.7.3 runs this diff in the player's own tick (dl.m_()), but
 +        // ours ticks at movement-packet rate (the D1 problem), so it lives here in
@@ -6547,7 +6663,7 @@ index 434743e..d95ea3c 100644
              ea2.a.b(hp2);
          }
      }
-@@ -100,6 +139,27 @@ public class fy {
+@@ -100,6 +150,27 @@ public class fy {
              if (!this.k.contains(ea2)) {
                  this.k.add(ea2);
                  ea2.a.b(this.b());
@@ -6575,7 +6691,7 @@ index 434743e..d95ea3c 100644
              }
          } else if (this.k.contains(ea2)) {
              this.k.remove(ea2);
-@@ -143,9 +203,29 @@ public class fy {
+@@ -143,9 +214,29 @@ public class fy {
          if (this.a instanceof es) {
              return new dl(this.a, 1);
          }
@@ -7459,7 +7575,7 @@ index 0a3ecfd..fe9d9da 100644
          dataOutputStream.writeShort(this.b);
          dataOutputStream.writeInt(this.c);
 diff --git a/baseline/net/minecraft/src/id.java b/ours/net/minecraft/src/id.java
-index cf6405b..79b223e 100644
+index cf6405b..b0fa372 100644
 --- a/baseline/net/minecraft/src/id.java
 +++ b/ours/net/minecraft/src/id.java
 @@ -3,6 +3,8 @@ package net.minecraft.src;
@@ -7579,31 +7695,25 @@ index cf6405b..79b223e 100644
              this.e.M = 0.0f;
              this.e.b(this.g, this.h, this.i, f2, f3);
              d3 = d2 - this.e.l;
-@@ -85,7 +158,23 @@ implements ef {
-             double d7 = d5 - this.e.n;
-             float f4 = 0.0625f;
-             boolean bl3 = this.d.e.a((dj)this.e, this.e.v.b().e(f4, f4, f4)).size() == 0;
-+            // fall damage is applied inside moveEntity, so the reset has to happen
-+            // before the call, not after
+@@ -105,16 +178,169 @@ implements ef {
+                 return;
+             }
+             this.e.w = gf2.g;
++            // b1.7.3's fall accounting, the last thing the accepted move does
++            // (NSSS NetServerHandler does the same at the same point): feed the
++            // CLAIMED y delta and CLAIMED onGround flag to the player's fall
++            // state. moveEntity no longer touches it for players (ea's empty
++            // updateFallState override), so this is the single writer — the
++            // replay's collision-clamped deltas and the physics tick's simulated
++            // landings, which both inflated fall damage, are out of the loop.
++            // During the join/respawn grace the shove out of terrain arrives as
++            // one huge downward delta, so keep purging instead of accumulating.
 +            if (this.joinGraceTicks > 0) {
 +                this.e.I = 0.0f;
++            } else {
++                this.e.handleFalling(this.e.m - this.h, gf2.g);
 +            }
-             this.e.c(d3, d6, d7);
-+            // moveEntity decides "landed" by seeing a downward motion clamped by
-+            // collision. The server never simulates gravity for players, it only
-+            // replays client deltas, so once the player is standing dy is 0, nothing
-+            // is clamped, and it concludes they are NOT on the ground - forever. Its
-+            // own landing branch therefore never fires and the accumulated fall
-+            // distance is stranded. Drive the landing off the client's onGround flag,
-+            // which is the only ground truth the server actually has.
-+            if (this.joinGraceTicks <= 0 && gf2.g && this.e.I > 0.0f) {
-+                this.e.a(this.e.I);
-+                this.e.I = 0.0f;
-+            }
-             d3 = d2 - this.e.l;
-             d6 = d4 - this.e.m;
-             if (d6 > -0.5 || d6 < 0.5) {
-@@ -109,12 +198,137 @@ implements ef {
+             this.d.f.b(this.e);
          }
      }
  
@@ -7690,6 +7800,20 @@ index cf6405b..79b223e 100644
 +        this.e.aP = 0;
 +        this.e.Y = 300;
 +        this.e.I = 0.0f;
++        // Fire does not survive death. Without this a player who dies burning
++        // respawns burning: U was never on this reset list, and worse, the
++        // corpse keeps ticking in the lava/fire it died in (removedOnDeath is
++        // false) and re-arms U=600 every tick until this packet arrives. The
++        // DataWatcher flags byte recomputes from U next tick, so watchers and
++        // (via the fy self-send) the player's own client hear the fire go out.
++        this.e.U = 0;
++        // Refresh the watched flags byte NOW, not next tick: the respawn
++        // handler cycles the entity tracker below, and the fresh attach seeds
++        // watchers from the dataWatcher as it stands — one tick of staleness
++        // meant every watcher saw the respawned player relight for a frame
++        // (falls_fire_test caught it). U and sneaking are both zero here, so
++        // the whole byte is zero.
++        this.e.dataWatcher.updateObject(0, Byte.valueOf((byte)0));
 +        // EntityPlayer.onDeath shrank us into the death pose (0.2x0.2, yOffset 0.1).
 +        // Vanilla never had to undo that because singleplayer respawn builds a new
 +        // entity; we reuse this one, so restore the normal dimensions or the player
@@ -7741,7 +7865,7 @@ index cf6405b..79b223e 100644
          this.e.a.b(new dq(d2, d3 + (double)1.62f, d3, d4, f2, f3, false));
      }
  
-@@ -124,7 +338,22 @@ implements ef {
+@@ -124,7 +350,22 @@ implements ef {
          double d4;
          double d5;
          int n2;
@@ -7765,7 +7889,7 @@ index cf6405b..79b223e 100644
          boolean bl2 = this.d.e.z = this.d.f.g(this.e.aq);
          boolean bl3 = false;
          if (hd2.e == 0) {
-@@ -154,13 +383,13 @@ implements ef {
+@@ -154,13 +395,13 @@ implements ef {
              n2 = n7;
          }
          if (hd2.e == 0) {
@@ -7781,7 +7905,7 @@ index cf6405b..79b223e 100644
                  this.e.ad.a(n3, n4, n5, n6);
              }
          } else if (hd2.e == 3 && (d5 = (d4 = this.e.l - ((double)n3 + 0.5)) * d4 + (d3 = this.e.m - ((double)n4 + 0.5)) * d3 + (d2 = this.e.n - ((double)n5 + 0.5)) * d2) < 256.0) {
-@@ -171,6 +400,49 @@ implements ef {
+@@ -171,6 +412,49 @@ implements ef {
  
      public void a(fe fe2) {
          int n2;
@@ -7831,7 +7955,7 @@ index cf6405b..79b223e 100644
          boolean bl2 = this.d.e.z = this.d.f.g(this.e.aq);
          int n3 = fe2.b;
          int n4 = fe2.c;
-@@ -180,9 +452,23 @@ implements ef {
+@@ -180,9 +464,23 @@ implements ef {
          if (n7 > (n2 = (int)gj.e(n5 - this.d.e.p))) {
              n2 = n7;
          }
@@ -7858,7 +7982,7 @@ index cf6405b..79b223e 100644
          }
          this.e.a.b(new et(n3, n4, n5, this.d.e));
          this.d.e.z = false;
-@@ -203,24 +489,36 @@ implements ef {
+@@ -203,24 +501,36 @@ implements ef {
          this.b.a(hp2);
      }
  
@@ -7908,7 +8032,7 @@ index cf6405b..79b223e 100644
      }
  
      public void a(ba ba2) {
-@@ -318,29 +616,107 @@ implements ef {
+@@ -318,29 +628,107 @@ implements ef {
          return this.e.aq;
      }
  
@@ -8070,10 +8194,40 @@ index dabeb78..5c7440a 100644
              dy2.a((double)n2 + 0.5, (double)n3 + 0.5, (double)n4 + 0.5, "random.door_open", 1.0f, dy2.m.nextFloat() * 0.1f + 0.9f);
          } else {
 diff --git a/baseline/net/minecraft/src/ih.java b/ours/net/minecraft/src/ih.java
-index b52840f..2b68fe9 100644
+index b52840f..38bf358 100644
 --- a/baseline/net/minecraft/src/ih.java
 +++ b/ours/net/minecraft/src/ih.java
-@@ -498,5 +498,84 @@ implements iw {
+@@ -171,6 +171,14 @@ implements iw {
+             if (n5 == 5) {
+                 this.q -= d8;
+             }
++            // 2026-08-07 turned-rail hardening: a rail's metadata must be a
++            // matrix index (0-9); a client was crashed by a rail cell carrying
++            // 15. An out-of-range value HERE would AIOOBE the world tick and
++            // take the whole server down, so clamp to straight and shout.
++            if (n5 < 0 || n5 >= ak.length) {
++                System.err.println("[railmeta] invalid rail metadata " + n5 + " under cart at (" + this.l + "," + this.m + "," + this.n + ") -- treating as straight");
++                n5 = 0;
++            }
+             int[][] nArray = ak[n5];
+             double d13 = nArray[1][0] - nArray[0][0];
+             double d14 = nArray[1][2] - nArray[0][2];
+@@ -361,6 +369,14 @@ implements iw {
+             if (n5 >= 2 && n5 <= 5) {
+                 d3 = n3 + 1;
+             }
++            // 2026-08-07 turned-rail hardening: a rail's metadata must be a
++            // matrix index (0-9); a client was crashed by a rail cell carrying
++            // 15. An out-of-range value HERE would AIOOBE the world tick and
++            // take the whole server down, so clamp to straight and shout.
++            if (n5 < 0 || n5 >= ak.length) {
++                System.err.println("[railmeta] invalid rail metadata " + n5 + " under cart at (" + this.l + "," + this.m + "," + this.n + ") -- treating as straight");
++                n5 = 0;
++            }
+             int[][] nArray = ak[n5];
+             double d5 = 0.0;
+             double d6 = (double)n4 + 0.5 + (double)nArray[0][0] * 0.5;
+@@ -498,5 +514,84 @@ implements iw {
      public gp a(int n2) {
          return this.ai[n2];
      }
