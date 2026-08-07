@@ -1,5 +1,5 @@
 diff --git a/baseline/net/minecraft/server/MinecraftServer.java b/ours/net/minecraft/server/MinecraftServer.java
-index e7c980d..87cd3a8 100644
+index e7c980d..6db04bc 100644
 --- a/baseline/net/minecraft/server/MinecraftServer.java
 +++ b/ours/net/minecraft/server/MinecraftServer.java
 @@ -14,6 +14,8 @@ import java.util.List;
@@ -225,7 +225,7 @@ index e7c980d..87cd3a8 100644
                  continue;
              }
              if (string.toLowerCase().startsWith("tp ")) {
-@@ -361,7 +400,440 @@ Runnable {
+@@ -361,7 +400,483 @@ Runnable {
                      this.a(string2, "Teleporting " + stringArray[1] + " to " + stringArray[2] + ".");
                      continue;
                  }
@@ -643,6 +643,49 @@ index e7c980d..87cd3a8 100644
 +                this.a(string2, "Boat placed at your feet.");
 +                continue;
 +            }
++            if (string.toLowerCase().startsWith("sand")) {
++                stringArray = string.split(" ");
++                ea dbgSandPlayer = this.f.h(string2);
++                if (dbgSandPlayer == null) {
++                    ef2.b("sand must be issued by a player in-game.");
++                    continue;
++                }
++                // debug trigger for falling-block tracking: place a REAL sand/gravel
++                // block in the air above the issuer and let vanilla do the rest —
++                // scheduled tick (3), ey/j tryToFall, hc spawn, tracker AddObject
++                // 70/71, landing 53. Spawning hc directly would skip the block half
++                // of the pipeline. /sand [gravel] [height 1-50, default 6].
++                int dbgSandId = ff.F.bc;
++                int dbgSandHeight = 6;
++                for (int sa = 1; sa < stringArray.length; ++sa) {
++                    if (stringArray[sa].equalsIgnoreCase("gravel")) {
++                        dbgSandId = ff.G.bc;
++                        continue;
++                    }
++                    try {
++                        dbgSandHeight = Integer.parseInt(stringArray[sa]);
++                    }
++                    catch (NumberFormatException numberFormatException) {
++                        // ignore junk args
++                    }
++                }
++                if (dbgSandHeight < 1) {
++                    dbgSandHeight = 1;
++                }
++                if (dbgSandHeight > 50) {
++                    dbgSandHeight = 50;
++                }
++                int dbgSandX = gj.b(dbgSandPlayer.l);
++                int dbgSandY = gj.b(dbgSandPlayer.m) + dbgSandHeight;
++                int dbgSandZ = gj.b(dbgSandPlayer.n);
++                if (this.e.a(dbgSandX, dbgSandY, dbgSandZ) != 0) {
++                    this.a(string2, "No air at +" + dbgSandHeight + " to drop from.");
++                    continue;
++                }
++                this.e.d(dbgSandX, dbgSandY, dbgSandZ, dbgSandId);
++                this.a(string2, (dbgSandId == ff.F.bc ? "Sand" : "Gravel") + " dropped from +" + dbgSandHeight + ".");
++                continue;
++            }
 +            if (string.toLowerCase().startsWith("probe ")) {
 +                // debug: report the block id+meta at world coords to the issuer.
 +                // Grew out of a plate_test hunt where three sessions' theories about
@@ -667,7 +710,7 @@ index e7c980d..87cd3a8 100644
                  continue;
              }
              if (string.toLowerCase().startsWith("give ")) {
-@@ -443,7 +915,36 @@ Runnable {
+@@ -443,7 +958,36 @@ Runnable {
  
      public static void main(String[] stringArray) {
          try {
@@ -6494,7 +6537,7 @@ index 5fb1b87..8a90f67 100644
          dataOutputStream.writeShort(this.b);
      }
 diff --git a/baseline/net/minecraft/src/fw.java b/ours/net/minecraft/src/fw.java
-index 7ce4fed..fe8a61c 100644
+index 7ce4fed..184db93 100644
 --- a/baseline/net/minecraft/src/fw.java
 +++ b/ours/net/minecraft/src/fw.java
 @@ -23,7 +23,7 @@ public class fw {
@@ -6506,7 +6549,7 @@ index 7ce4fed..fe8a61c 100644
                  if (fy2.a == ea2) continue;
                  fy2.a(ea2);
              }
-@@ -31,8 +31,37 @@ public class fw {
+@@ -31,8 +31,44 @@ public class fw {
              this.a(dj2, 64, 20);
          } else if (dj2 instanceof ih) {
              this.a(dj2, 160, 4);
@@ -6541,10 +6584,17 @@ index 7ce4fed..fe8a61c 100644
 +            // fy.b() type-61 case existed but was dead until players could throw
 +            // them (ch.a).
 +            this.a(dj2, 64, 2);
++        } else if (dj2 instanceof hc) {
++            // Added by us: falling sand/gravel was never tracked, so a collapse was
++            // invisible — clients only saw the block-change teleport to the bottom.
++            // Range and cadence are b1.7.3's; the sparse cadence is fine because the
++            // client entity runs the identical fall integrator and only needs
++            // correcting, and a >4-block drift rides the absolute-teleport packet.
++            this.a(dj2, 160, 20);
          }
      }
  
-@@ -67,7 +96,7 @@ public class fw {
+@@ -67,7 +103,7 @@ public class fw {
          for (int i2 = 0; i2 < arrayList.size(); ++i2) {
              Object object;
              object = (ea)arrayList.get(i2);
@@ -6582,7 +6632,7 @@ index f51fd2c..c0e6ec1 100644
          dataOutputStream.writeFloat(this.f);
          super.a(dataOutputStream);
 diff --git a/baseline/net/minecraft/src/fy.java b/ours/net/minecraft/src/fy.java
-index 434743e..a42b51e 100644
+index 434743e..3473cbe 100644
 --- a/baseline/net/minecraft/src/fy.java
 +++ b/ours/net/minecraft/src/fy.java
 @@ -23,6 +23,11 @@ public class fy {
@@ -6691,7 +6741,7 @@ index 434743e..a42b51e 100644
              }
          } else if (this.k.contains(ea2)) {
              this.k.remove(ea2);
-@@ -143,9 +214,29 @@ public class fy {
+@@ -143,9 +214,41 @@ public class fy {
          if (this.a instanceof es) {
              return new dl(this.a, 1);
          }
@@ -6710,6 +6760,18 @@ index 434743e..a42b51e 100644
 +            // Added by us, b1.7.3's id. Live since PARITY E routed player
 +            // projectiles: ch.a spawns one per throw and fw tracks it.
 +            return new dl(this.a, 61);
++        }
++        if (this.a instanceof hc) {
++            // Added by us, b1.7.3's ids: 70 sand, 71 gravel. Anything else falling
++            // (there is nothing else in alpha) would throw below, which is the same
++            // fail-loud choice b1.7.3 makes.
++            hc hc2 = (hc)this.a;
++            if (hc2.a == ff.F.bc) {
++                return new dl(this.a, 70);
++            }
++            if (hc2.a == ff.G.bc) {
++                return new dl(this.a, 71);
++            }
 +        }
          if (this.a instanceof ab) {
              return new gv((is)this.a);
