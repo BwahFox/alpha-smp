@@ -1,5 +1,5 @@
 diff --git a/baseline/net/minecraft/server/MinecraftServer.java b/ours/net/minecraft/server/MinecraftServer.java
-index e7c980d..b68411e 100644
+index e7c980d..b5e8b08 100644
 --- a/baseline/net/minecraft/server/MinecraftServer.java
 +++ b/ours/net/minecraft/server/MinecraftServer.java
 @@ -14,6 +14,8 @@ import java.util.List;
@@ -117,7 +117,7 @@ index e7c980d..b68411e 100644
              ai ai2 = (ai)this.o.remove(0);
              String string = ai2.a;
              ef ef2 = ai2.b;
-@@ -252,8 +277,23 @@ Runnable {
+@@ -252,13 +277,29 @@ Runnable {
                  ef2.b("   op <player>               turns a player into an op");
                  ef2.b("   deop <player>             removes op status from a player");
                  ef2.b("   tp <player1> <player2>    moves one player to the same location as another player");
@@ -141,7 +141,13 @@ index e7c980d..b68411e 100644
                  ef2.b("   stop                      gracefully stops the server");
                  ef2.b("   save-all                  forces a server-wide level save");
                  ef2.b("   save-off                  disables terrain saving (useful for backup scripts)");
-@@ -288,52 +328,52 @@ Runnable {
+                 ef2.b("   save-on                   re-enables terrain saving");
+                 ef2.b("   list                      lists all currently connected players");
++                ef2.b("   whitelist on|off|add <p>|remove <p>|list|reload   optional whitelist (off by default; ops always bypass)");
+                 ef2.b("   say <message>             broadcasts a message to all players");
+                 continue;
+             }
+@@ -288,52 +329,99 @@ Runnable {
                  continue;
              }
              if (string.toLowerCase().startsWith("op ")) {
@@ -182,6 +188,53 @@ index e7c980d..b68411e 100644
 +                stringArg = string.substring(string.indexOf(" ")).trim();
 +                this.f.d(stringArg);
 +                this.a(string2, "Pardoning ip " + stringArg);
++                continue;
++            }
++            if (string.toLowerCase().startsWith("whitelist")) {
++                // Optional whitelist, modern syntax. Enforcement is entirely
++                // server-side in ft's login gate — the client has no say and no
++                // whitelist code. Off by default; on/off persists via
++                // server.properties "white-list"; names live in white-list.txt.
++                stringArray = string.trim().split(" +");
++                String wlSub = stringArray.length >= 2 ? stringArray[1].toLowerCase() : "";
++                if (wlSub.equals("on")) {
++                    this.f.setWhiteListEnabled(true);
++                    this.a(string2, "Turned on the whitelist");
++                    continue;
++                }
++                if (wlSub.equals("off")) {
++                    this.f.setWhiteListEnabled(false);
++                    this.a(string2, "Turned off the whitelist");
++                    continue;
++                }
++                if (wlSub.equals("list")) {
++                    ef2.b("White-listed players (" + (this.f.isWhiteListEnabled() ? "whitelist ON" : "whitelist OFF") + "): "
++                            + String.join(", ", (Iterable<String>)this.f.getWhiteListedPlayers()));
++                    continue;
++                }
++                if (wlSub.equals("reload")) {
++                    this.f.reloadWhiteList();
++                    this.a(string2, "Reloaded the whitelist from white-list.txt");
++                    continue;
++                }
++                if ((wlSub.equals("add") || wlSub.equals("remove")) && stringArray.length >= 3) {
++                    // same charset gate the login path enforces — keeps garbage
++                    // (and injection) out of white-list.txt
++                    String wlName = stringArray[2];
++                    if (!wlName.matches("[A-Za-z0-9_]{1,16}")) {
++                        ef2.b("Invalid username!");
++                        continue;
++                    }
++                    if (wlSub.equals("add")) {
++                        this.f.addToWhiteList(wlName);
++                        this.a(string2, "Added " + wlName.toLowerCase() + " to the whitelist");
++                    } else {
++                        this.f.removeFromWhiteList(wlName);
++                        this.a(string2, "Removed " + wlName.toLowerCase() + " from the whitelist");
++                    }
++                    continue;
++                }
++                ef2.b("Syntax: whitelist on|off|add <player>|remove <player>|list|reload");
                  continue;
              }
              if (string.toLowerCase().startsWith("ban ")) {
@@ -217,7 +270,7 @@ index e7c980d..b68411e 100644
                      object = ea2;
                  }
                  if (object != null) {
-@@ -341,7 +381,7 @@ Runnable {
+@@ -341,7 +429,7 @@ Runnable {
                      this.a(string2, "Kicking " + ((ea)object).aq);
                      continue;
                  }
@@ -226,7 +279,7 @@ index e7c980d..b68411e 100644
                  continue;
              }
              if (string.toLowerCase().startsWith("tp ")) {
-@@ -361,7 +401,506 @@ Runnable {
+@@ -361,7 +449,506 @@ Runnable {
                      this.a(string2, "Teleporting " + stringArray[1] + " to " + stringArray[2] + ".");
                      continue;
                  }
@@ -734,7 +787,7 @@ index e7c980d..b68411e 100644
                  continue;
              }
              if (string.toLowerCase().startsWith("give ")) {
-@@ -443,7 +982,36 @@ Runnable {
+@@ -443,7 +1030,36 @@ Runnable {
  
      public static void main(String[] stringArray) {
          try {
@@ -4624,6 +4677,23 @@ index a349bca..389f45c 100644
 +    }
  }
  
+diff --git a/baseline/net/minecraft/src/cq.java b/ours/net/minecraft/src/cq.java
+index 703c6e2..fca1d59 100644
+--- a/baseline/net/minecraft/src/cq.java
++++ b/ours/net/minecraft/src/cq.java
+@@ -73,5 +73,12 @@ public class cq {
+             return bl2;
+         }
+     }
++
++    /** Set + persist a property (b1.7.3's setProperty/saveProperties, ported so
++     * /whitelist on|off survives a restart). Vanilla a0.2.1 could only read. */
++    public void setProperty(String string, String string2) {
++        this.b.setProperty(string, string2);
++        this.b();
++    }
+ }
+ 
 diff --git a/baseline/net/minecraft/src/ct.java b/ours/net/minecraft/src/ct.java
 index 918511a..913df83 100644
 --- a/baseline/net/minecraft/src/ct.java
@@ -6642,10 +6712,42 @@ index 0dbbfb3..a5b4aa5 100644
 +    }
 +}
 diff --git a/baseline/net/minecraft/src/ft.java b/ours/net/minecraft/src/ft.java
-index e3654d2..4440f7c 100644
+index e3654d2..5a7a4c3 100644
 --- a/baseline/net/minecraft/src/ft.java
 +++ b/ours/net/minecraft/src/ft.java
-@@ -59,6 +59,9 @@ public class ft {
+@@ -28,20 +28,31 @@ public class ft {
+     private File j;
+     private File k;
+     private cl l;
++    // Whitelist (ported from b1.7.3, modern command syntax): SERVER-side only —
++    // enforced in the login gate below; the client is never consulted and ships
++    // no whitelist code. Off by default; the enabled flag lives in
++    // server.properties ("white-list") so it survives restarts.
++    private File whiteListFile;
++    private Set whiteListedPlayers = new HashSet();
++    private boolean whiteListEnforced;
+ 
+     public ft(MinecraftServer minecraftServer) {
+         this.c = minecraftServer;
+         this.i = minecraftServer.a("banned-players.txt");
+         this.j = minecraftServer.a("banned-ips.txt");
+         this.k = minecraftServer.a("ops.txt");
++        this.whiteListFile = minecraftServer.a("white-list.txt");
+         this.d = new hg(minecraftServer);
+         this.e = minecraftServer.d.a("max-players", 20);
++        this.whiteListEnforced = minecraftServer.d.a("white-list", false);
+         this.e();
+         this.g();
+         this.i();
++        this.loadWhiteList();
+         this.f();
+         this.h();
+         this.j();
++        this.saveWhiteList();
+     }
+ 
+     public void a(ee ee2) {
+@@ -59,6 +70,9 @@ public class ft {
          while (this.c.e.a((dj)ea2, ea2.v).size() != 0) {
              ea2.a(ea2.l, ea2.m + 1.0, ea2.n);
          }
@@ -6655,7 +6757,7 @@ index e3654d2..4440f7c 100644
          this.c.e.a(ea2);
          this.d.a(ea2);
      }
-@@ -68,6 +71,19 @@ public class ft {
+@@ -68,6 +82,19 @@ public class ft {
      }
  
      public void c(ea ea2) {
@@ -6675,7 +6777,7 @@ index e3654d2..4440f7c 100644
          this.d.b(ea2);
          this.l.a(ea2);
          this.c.e.d(ea2);
-@@ -75,6 +91,16 @@ public class ft {
+@@ -75,6 +102,16 @@ public class ft {
      }
  
      public ea a(ew ew2, String string, String string2) {
@@ -6692,7 +6794,24 @@ index e3654d2..4440f7c 100644
          if (this.f.contains(string.trim().toLowerCase())) {
              ew2.b("You are banned from this server!");
              return null;
-@@ -112,6 +138,42 @@ public class ft {
+@@ -85,6 +122,16 @@ public class ft {
+             ew2.b("Your IP address is banned from this server!");
+             return null;
+         }
++        // Whitelist gate — server-side, same trust model as the ban checks above:
++        // the client only ever asks to log in and gets refused; nothing it sends
++        // can influence the decision. Ops bypass (b1.7.3 semantics), so enabling
++        // the whitelist can never lock the admin out. Checked before the
++        // server-full test so a non-whitelisted name can't probe occupancy.
++        if (this.whiteListEnforced && !this.h.contains(string.trim().toLowerCase())
++                && !this.whiteListedPlayers.contains(string.trim().toLowerCase())) {
++            ew2.b("You are not white-listed on this server!");
++            return null;
++        }
+         if (this.b.size() >= this.e) {
+             ew2.b("The server is full!");
+             return null;
+@@ -112,6 +159,42 @@ public class ft {
          }
      }
  
@@ -6735,7 +6854,7 @@ index e3654d2..4440f7c 100644
      public String c() {
          String string = "";
          for (int i2 = 0; i2 < this.b.size(); ++i2) {
-@@ -151,7 +213,7 @@ public class ft {
+@@ -151,7 +234,7 @@ public class ft {
      private void f() {
          try {
              PrintWriter printWriter = new PrintWriter(new FileWriter(this.i, false));
@@ -6744,7 +6863,7 @@ index e3654d2..4440f7c 100644
                  printWriter.println(string);
              }
              printWriter.close();
-@@ -189,7 +251,7 @@ public class ft {
+@@ -189,7 +272,7 @@ public class ft {
      private void h() {
          try {
              PrintWriter printWriter = new PrintWriter(new FileWriter(this.j, false));
@@ -6753,7 +6872,7 @@ index e3654d2..4440f7c 100644
                  printWriter.println(string);
              }
              printWriter.close();
-@@ -227,7 +289,7 @@ public class ft {
+@@ -227,7 +310,7 @@ public class ft {
      private void j() {
          try {
              PrintWriter printWriter = new PrintWriter(new FileWriter(this.k, false));
@@ -6762,6 +6881,73 @@ index e3654d2..4440f7c 100644
                  printWriter.println(string);
              }
              printWriter.close();
+@@ -241,6 +324,66 @@ public class ft {
+         return this.h.contains(string.trim().toLowerCase());
+     }
+ 
++    // ---- whitelist (same file-backed pattern as the ban/op lists above) ----
++
++    public boolean isWhiteListEnabled() {
++        return this.whiteListEnforced;
++    }
++
++    public void setWhiteListEnabled(boolean bl2) {
++        this.whiteListEnforced = bl2;
++        this.c.d.setProperty("white-list", "" + bl2);
++    }
++
++    public void addToWhiteList(String string) {
++        this.whiteListedPlayers.add(string.toLowerCase());
++        this.saveWhiteList();
++    }
++
++    public void removeFromWhiteList(String string) {
++        this.whiteListedPlayers.remove(string.toLowerCase());
++        this.saveWhiteList();
++    }
++
++    public Set getWhiteListedPlayers() {
++        return this.whiteListedPlayers;
++    }
++
++    public void reloadWhiteList() {
++        this.loadWhiteList();
++    }
++
++    private void loadWhiteList() {
++        try {
++            this.whiteListedPlayers.clear();
++            if (!this.whiteListFile.exists()) {
++                return;
++            }
++            BufferedReader bufferedReader = new BufferedReader(new FileReader(this.whiteListFile));
++            String string = "";
++            while ((string = bufferedReader.readLine()) != null) {
++                this.whiteListedPlayers.add(string.trim().toLowerCase());
++            }
++            bufferedReader.close();
++        }
++        catch (Exception exception) {
++            a.warning("Failed to load white-list: " + exception);
++        }
++    }
++
++    private void saveWhiteList() {
++        try {
++            PrintWriter printWriter = new PrintWriter(new FileWriter(this.whiteListFile, false));
++            for (String string : (Iterable<String>)this.whiteListedPlayers) {
++                printWriter.println(string);
++            }
++            printWriter.close();
++        }
++        catch (Exception exception) {
++            a.warning("Failed to save white-list: " + exception);
++        }
++    }
++
+     public ea h(String string) {
+         for (int i2 = 0; i2 < this.b.size(); ++i2) {
+             ea ea2 = (ea)this.b.get(i2);
 diff --git a/baseline/net/minecraft/src/fv.java b/ours/net/minecraft/src/fv.java
 index 5fb1b87..8a90f67 100644
 --- a/baseline/net/minecraft/src/fv.java
