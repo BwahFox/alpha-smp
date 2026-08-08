@@ -1446,10 +1446,10 @@ index 0000000..cd747bd
 +}
 diff --git a/ours/net/minecraft/src/DataWatcher.java b/ours/net/minecraft/src/DataWatcher.java
 new file mode 100644
-index 0000000..10316d4
+index 0000000..4e1ac47
 --- /dev/null
 +++ b/ours/net/minecraft/src/DataWatcher.java
-@@ -0,0 +1,197 @@
+@@ -0,0 +1,205 @@
 +package net.minecraft.src;
 +
 +import java.io.DataInputStream;
@@ -1602,8 +1602,16 @@ index 0000000..10316d4
 +
 +    public static List readWatchableObjects(DataInputStream dataInputStream) throws IOException {
 +        ArrayList<WatchableObject> arrayList = null;
++        int count = 0;
 +        for (byte by = dataInputStream.readByte(); by != 127; by = dataInputStream.readByte()) {
 +            WatchableObject watchableObject;
++            // SECURITY: a hostile client can send packet 40 (the server decodes any id).
++            // The loop runs until a 127 terminator, so a stream that never sends one
++            // grows the list until OutOfMemoryError. addObject rejects ids > 31, so a
++            // valid packet carries at most 32 entries; cap at 64 (2x headroom).
++            if (++count > 64) {
++                throw new IOException("Too many watched objects");
++            }
 +            if (arrayList == null) {
 +                arrayList = new ArrayList<WatchableObject>();
 +            }
@@ -2429,10 +2437,10 @@ index 0000000..71fa3a4
 +}
 diff --git a/ours/net/minecraft/src/PacketExplosion.java b/ours/net/minecraft/src/PacketExplosion.java
 new file mode 100644
-index 0000000..b96727f
+index 0000000..40b2148
 --- /dev/null
 +++ b/ours/net/minecraft/src/PacketExplosion.java
-@@ -0,0 +1,93 @@
+@@ -0,0 +1,100 @@
 +package net.minecraft.src;
 +
 +import java.io.DataInputStream;
@@ -2485,6 +2493,13 @@ index 0000000..b96727f
 +        this.explosionZ = dataInputStream.readDouble();
 +        this.explosionSize = dataInputStream.readFloat();
 +        int n2 = dataInputStream.readInt();
++        // SECURITY: the server decodes any registered packet id from any client
++        // (hp.b has no direction check), so a hostile client can send this. The raw
++        // readInt() count drove an unbounded loop + HashSet -> OutOfMemoryError. A real
++        // blast destroys at most a few hundred blocks; cap well above that.
++        if (n2 < 0 || n2 > 0x2000) {
++            throw new IOException("Explosion block count out of range: " + n2);
++        }
 +        this.destroyedBlockPositions = new HashSet();
 +        int n3 = (int)this.explosionX;
 +        int n4 = (int)this.explosionY;
@@ -3167,10 +3182,10 @@ index 0000000..c1b202f
 +}
 diff --git a/ours/net/minecraft/src/PacketWindowItems.java b/ours/net/minecraft/src/PacketWindowItems.java
 new file mode 100644
-index 0000000..4cd7ade
+index 0000000..b1b6029
 --- /dev/null
 +++ b/ours/net/minecraft/src/PacketWindowItems.java
-@@ -0,0 +1,64 @@
+@@ -0,0 +1,70 @@
 +package net.minecraft.src;
 +
 +import java.io.DataInputStream;
@@ -3202,6 +3217,12 @@ index 0000000..4cd7ade
 +    public void a(DataInputStream in) throws IOException {
 +        this.windowId = in.readByte();
 +        short size = in.readShort();
++        // SECURITY: a hostile client can send this (server decodes any id). readShort is
++        // signed, so a negative size threw NegativeArraySizeException (caught, minor) and
++        // a large one over-allocated. Real windows hold at most ~45 slots; bound it.
++        if (size < 0 || size > 256) {
++            throw new IOException("Window item count out of range: " + size);
++        }
 +        this.stacks = new gp[size];
 +        for (int i = 0; i < size; ++i) {
 +            short id = in.readShort();
@@ -3975,7 +3996,7 @@ index a007926..c4163c2 100644
      }
  
 diff --git a/baseline/net/minecraft/src/bb.java b/ours/net/minecraft/src/bb.java
-index ef2df98..23887b8 100644
+index ef2df98..105f2c1 100644
 --- a/baseline/net/minecraft/src/bb.java
 +++ b/ours/net/minecraft/src/bb.java
 @@ -1,5 +1,7 @@
@@ -3995,6 +4016,24 @@ index ef2df98..23887b8 100644
          this.e = socket;
          this.l = ej2;
          socket.setTrafficClass(24);
+@@ -118,9 +120,15 @@ public class bb {
+                     this.a("End of stream");
+                 }
+             }
+-            catch (Exception exception) {
++            // SECURITY: was catch(Exception) — but packet decode runs here, and a
++            // malicious packet can throw an Error (StackOverflowError from deeply nested
++            // NBT, OutOfMemoryError). Error is not Exception, so it escaped this catch and
++            // killed the read thread (leaking the socket, since a() never ran). Catch
++            // Throwable so any decode failure cleanly drops the offending connection.
++            catch (Throwable throwable) {
+                 if (this.p) break block4;
+-                this.a(exception);
++                throwable.printStackTrace();
++                this.a("Internal exception: " + throwable);
+             }
+         }
+     }
 diff --git a/baseline/net/minecraft/src/bd.java b/ours/net/minecraft/src/bd.java
 index 0198d6e..edd663f 100644
 --- a/baseline/net/minecraft/src/bd.java
@@ -4561,7 +4600,7 @@ index 918511a..913df83 100644
      }
  
 diff --git a/baseline/net/minecraft/src/cu.java b/ours/net/minecraft/src/cu.java
-index d78ed07..e14b1b1 100644
+index d78ed07..e6a3e80 100644
 --- a/baseline/net/minecraft/src/cu.java
 +++ b/ours/net/minecraft/src/cu.java
 @@ -13,9 +13,9 @@ extends Thread {
@@ -4575,6 +4614,27 @@ index d78ed07..e14b1b1 100644
      }
  
      public void run() {
+@@ -23,6 +23,20 @@ extends Thread {
+             try {
+                 Socket socket = dc.a(this.b).accept();
+                 if (socket == null) continue;
++                // SECURITY: refuse new sockets once too many connections are mid-login.
++                // Each connection spawns 2 threads immediately at construction, so an
++                // unbounded accept loop was a pre-auth thread/memory-exhaustion DoS (works
++                // in both online and offline mode, no data required). 60 pending logins is
++                // far above any legitimate burst; the ~5s login timeout drains them.
++                if (this.b.pendingCount() >= 60) {
++                    try {
++                        socket.close();
++                    }
++                    catch (IOException iOException) {
++                        // ignore
++                    }
++                    continue;
++                }
+                 ew ew2 = new ew(this.a, socket, "Connection #" + dc.b(this.b));
+                 dc.a(this.b, ew2);
+             }
 diff --git a/baseline/net/minecraft/src/cw.java b/ours/net/minecraft/src/cw.java
 index 0692b6f..01fe802 100644
 --- a/baseline/net/minecraft/src/cw.java
@@ -4642,10 +4702,10 @@ index 5235f55..fc7342c 100644
  }
  
 diff --git a/baseline/net/minecraft/src/cz.java b/ours/net/minecraft/src/cz.java
-index 5e3dc00..d477c91 100644
+index 5e3dc00..47c7562 100644
 --- a/baseline/net/minecraft/src/cz.java
 +++ b/ours/net/minecraft/src/cz.java
-@@ -49,7 +49,7 @@ extends hp {
+@@ -49,17 +49,29 @@ extends hp {
          }
      }
  
@@ -4654,7 +4714,30 @@ index 5e3dc00..d477c91 100644
          this.a = dataInputStream.readInt();
          this.b = dataInputStream.readShort();
          this.c = dataInputStream.readInt();
-@@ -73,7 +73,7 @@ extends hp {
+         this.d = dataInputStream.read() + 1;
+         this.e = dataInputStream.read() + 1;
+         this.f = dataInputStream.read() + 1;
++        // SECURITY: the read loop (hp.b) decodes any registered packet id from any
++        // peer with no client/server direction check, so a malicious client can send
++        // this (server->client) MapChunk packet to the server. Both allocations below
++        // are sized straight from the wire: n2 is a raw readInt() (up to ~2GB), and
++        // d*e*f is three unbounded size bytes (up to ~42MB). Either one is a one-packet
++        // remote OutOfMemoryError. A legit chunk is 16*128*16 cells -> g is 81920 bytes
++        // uncompressed and the compressed payload is smaller, so 1MB is a generous cap
++        // that never rejects real data. Reject anything larger before allocating.
++        int uncompressed = this.d * this.e * this.f * 5 / 2;
+         int n2 = dataInputStream.readInt();
++        if (n2 < 0 || n2 > 0x100000 || uncompressed < 0 || uncompressed > 0x100000) {
++            throw new IOException("MapChunk payload out of bounds");
++        }
+         byte[] byArray = new byte[n2];
+         dataInputStream.readFully(byArray);
+-        this.g = new byte[this.d * this.e * this.f * 5 / 2];
++        this.g = new byte[uncompressed];
+         Inflater inflater = new Inflater();
+         inflater.setInput(byArray);
+         try {
+@@ -73,7 +85,7 @@ extends hp {
          }
      }
  
@@ -4718,7 +4801,7 @@ index 26d3f1c..50205ab 100644
          dataOutputStream.writeInt(this.b);
          dataOutputStream.write(this.c ? 1 : 0);
 diff --git a/baseline/net/minecraft/src/dc.java b/ours/net/minecraft/src/dc.java
-index 1b3666c..4d9bf6a 100644
+index 1b3666c..c02352e 100644
 --- a/baseline/net/minecraft/src/dc.java
 +++ b/ours/net/minecraft/src/dc.java
 @@ -1,5 +1,7 @@
@@ -4738,6 +4821,48 @@ index 1b3666c..4d9bf6a 100644
          this.c = minecraftServer;
          this.d = new ServerSocket(n2, 0, inetAddress);
          this.d.setPerformancePreferences(0, 2, 1);
+@@ -33,6 +35,15 @@ public class dc {
+         this.h.add(id2);
+     }
+ 
++    // SECURITY: number of connections that have not yet finished logging in. The accept
++    // loop (cu.java) caps on this so a flood of half-open/slow logins can't spawn
++    // unbounded threads (2 per connection) and exhaust memory before the ~5s login
++    // timeout reaps them. Authenticated players live in `h` and are bounded separately by
++    // the max-player check in ft.a.
++    int pendingCount() {
++        return this.g.size();
++    }
++
+     private void a(ew ew2) {
+         if (ew2 == null) {
+             throw new IllegalArgumentException("Got null pendingconnection!");
+@@ -48,7 +59,12 @@ public class dc {
+             try {
+                 ((ew)ej2).a();
+             }
+-            catch (Exception exception) {
++            // SECURITY: was catch(Exception). This is the main server thread; an uncaught
++            // Throwable here unwinds to MinecraftServer.run()'s catch, which does
++            // System.exit(1) — so one packet that throws an Error (OOM/StackOverflow from
++            // a malicious payload) would kill the whole server. Catch Throwable so the
++            // offending connection is dropped and the server keeps running.
++            catch (Throwable exception) {
+                 ((ew)ej2).b("Internal server error");
+                 a.log(Level.WARNING, "Failed to handle packet: " + exception, exception);
+             }
+@@ -60,7 +76,10 @@ public class dc {
+             try {
+                 ((id)ej2).a();
+             }
+-            catch (Exception exception) {
++            // SECURITY: broadened from Exception to Throwable — same reason as the pending
++            // loop above. A handler that throws an Error on the main thread must not reach
++            // MinecraftServer.run()'s System.exit(1); drop the connection instead.
++            catch (Throwable exception) {
+                 ((id)ej2).c("Internal server error");
+                 a.log(Level.WARNING, "Failed to handle packet: " + exception, exception);
+             }
 diff --git a/baseline/net/minecraft/src/dd.java b/ours/net/minecraft/src/dd.java
 index 5e16a75..0bb922a 100644
 --- a/baseline/net/minecraft/src/dd.java
@@ -5010,7 +5135,7 @@ index 792f126..1727dfb 100644
          dataOutputStream.writeByte(this.e);
          dataOutputStream.writeInt(this.b);
 diff --git a/baseline/net/minecraft/src/dm.java b/ours/net/minecraft/src/dm.java
-index 9e833f8..363a32b 100644
+index 9e833f8..2fc0f34 100644
 --- a/baseline/net/minecraft/src/dm.java
 +++ b/ours/net/minecraft/src/dm.java
 @@ -1,5 +1,7 @@
@@ -5030,7 +5155,7 @@ index 9e833f8..363a32b 100644
          this.b = this.a.size() > 0 ? ((gg)this.a.get(0)).a() : (byte)1;
          dataOutput.writeByte(this.b);
          dataOutput.writeInt(this.a.size());
-@@ -22,7 +24,7 @@ extends gg {
+@@ -22,9 +24,16 @@ extends gg {
          }
      }
  
@@ -5038,7 +5163,16 @@ index 9e833f8..363a32b 100644
 +    void a(DataInput dataInput) throws IOException {
          this.b = dataInput.readByte();
          int n2 = dataInput.readInt();
++        // SECURITY: NBT lists are parsed from the network (see fp.java). A TAG_List of
++        // 2 billion TAG_End elements (each reads zero bytes) spins here allocating child
++        // tags until OutOfMemoryError from a tiny packet. No real alpha NBT list is
++        // anywhere near this large, so cap the count before looping.
++        if (n2 < 0 || n2 > 0x8000) {
++            throw new IOException("NBT list too long: " + n2);
++        }
          this.a = new ArrayList();
+         for (int i2 = 0; i2 < n2; ++i2) {
+             gg gg2 = gg.a(this.b);
 diff --git a/baseline/net/minecraft/src/dq.java b/ours/net/minecraft/src/dq.java
 index 21f3511..f3c5857 100644
 --- a/baseline/net/minecraft/src/dq.java
@@ -5963,7 +6097,7 @@ index 7e6886c..35ecf52 100644
  
      protected String d() {
 diff --git a/baseline/net/minecraft/src/ew.java b/ours/net/minecraft/src/ew.java
-index eb71aab..916ad12 100644
+index eb71aab..1360497 100644
 --- a/baseline/net/minecraft/src/ew.java
 +++ b/ours/net/minecraft/src/ew.java
 @@ -1,5 +1,7 @@
@@ -5983,7 +6117,7 @@ index eb71aab..916ad12 100644
          this.e = minecraftServer;
          this.b = new bb(socket, string, this);
      }
-@@ -55,7 +57,12 @@ extends ej {
+@@ -55,10 +57,24 @@ extends ej {
  
      public void a(z z2) {
          this.g = z2.b;
@@ -5997,7 +6131,19 @@ index eb71aab..916ad12 100644
              this.b("Outdated client!");
              return;
          }
-@@ -71,7 +78,13 @@ extends ej {
++        // SECURITY: validate the username here, before it is used anywhere — in offline
++        // mode it flows straight to b(z2) (file path, see ft.a), and in online mode it is
++        // interpolated raw into the Mojang auth URL (dd.java). Enforcing the real username
++        // charset up front makes both paths safe and rejects a hostile name without even
++        // spawning the auth thread. ft.a re-checks as a sink-side backstop.
++        if (z2.b == null || !z2.b.matches("[A-Za-z0-9_]{1,16}")) {
++            this.b("Invalid username!");
++            return;
++        }
+         if (!this.e.l) {
+             this.b(z2);
+         } else {
+@@ -71,7 +87,13 @@ extends ej {
          if (ea2 != null) {
              a.info(this.b() + " logged in");
              id id2 = new id(this.e, this.b, ea2);
@@ -6341,7 +6487,7 @@ index daf5e1a..3dd14e7 100644
          if (this.ad == 0 && fc2.aj.a(this.a)) {
              this.h.a(this, "random.pop", 0.2f, ((this.R.nextFloat() - this.R.nextFloat()) * 0.7f + 1.0f) * 2.0f);
 diff --git a/baseline/net/minecraft/src/fp.java b/ours/net/minecraft/src/fp.java
-index 37c654d..2c1a263 100644
+index 37c654d..937e0a6 100644
 --- a/baseline/net/minecraft/src/fp.java
 +++ b/ours/net/minecraft/src/fp.java
 @@ -1,5 +1,7 @@
@@ -6352,7 +6498,7 @@ index 37c654d..2c1a263 100644
  /*
   * Decompiled with CFR 0.152.
   */
-@@ -17,12 +19,12 @@ extends gg {
+@@ -17,13 +19,22 @@ extends gg {
          this.a = byArray;
      }
  
@@ -6365,8 +6511,18 @@ index 37c654d..2c1a263 100644
 -    void a(DataInput dataInput) {
 +    void a(DataInput dataInput) throws IOException {
          int n2 = dataInput.readInt();
++        // SECURITY: NBT is parsed from the network (packet 59 / ib.java feeds an
++        // attacker-supplied gzip blob straight into aj.a). A raw readInt() here let a
++        // ~30-byte packet demand `new byte[2GB]` -> OutOfMemoryError, which is an Error,
++        // not an Exception, so it escapes the read loop's catch and takes the whole JVM
++        // down. Real byte-array tags (biggest is a chunk's 32768-byte block array) are
++        // far under 1MB, so cap there and reject before allocating.
++        if (n2 < 0 || n2 > 0x100000) {
++            throw new IOException("NBT byte array too large: " + n2);
++        }
          this.a = new byte[n2];
          dataInput.readFully(this.a);
+     }
 diff --git a/baseline/net/minecraft/src/fs.java b/ours/net/minecraft/src/fs.java
 index 0dbbfb3..a5b4aa5 100644
 --- a/baseline/net/minecraft/src/fs.java
@@ -6406,7 +6562,7 @@ index 0dbbfb3..a5b4aa5 100644
 +    }
 +}
 diff --git a/baseline/net/minecraft/src/ft.java b/ours/net/minecraft/src/ft.java
-index e3654d2..ed68de6 100644
+index e3654d2..4440f7c 100644
 --- a/baseline/net/minecraft/src/ft.java
 +++ b/ours/net/minecraft/src/ft.java
 @@ -59,6 +59,9 @@ public class ft {
@@ -6439,7 +6595,24 @@ index e3654d2..ed68de6 100644
          this.d.b(ea2);
          this.l.a(ea2);
          this.c.e.d(ea2);
-@@ -112,6 +128,42 @@ public class ft {
+@@ -75,6 +91,16 @@ public class ft {
+     }
+ 
+     public ea a(ew ew2, String string, String string2) {
++        // SECURITY: the username becomes a file path (cl.java: new File(dir, name+".dat"),
++        // which deletes then renames) and is written into logs and the ban/op text files.
++        // In online-mode Mojang auth already constrains it to [A-Za-z0-9_], but offline-mode
++        // does no validation at all, so a name like "../../etc/foo" is arbitrary file
++        // write/delete and control chars forge log/ban-list lines. Enforce the real Mojang
++        // username charset here, before the name reaches any sink. Rejects nothing legit.
++        if (string == null || !string.matches("[A-Za-z0-9_]{1,16}")) {
++            ew2.b("Invalid username!");
++            return null;
++        }
+         if (this.f.contains(string.trim().toLowerCase())) {
+             ew2.b("You are banned from this server!");
+             return null;
+@@ -112,6 +138,42 @@ public class ft {
          }
      }
  
@@ -6482,7 +6655,7 @@ index e3654d2..ed68de6 100644
      public String c() {
          String string = "";
          for (int i2 = 0; i2 < this.b.size(); ++i2) {
-@@ -151,7 +203,7 @@ public class ft {
+@@ -151,7 +213,7 @@ public class ft {
      private void f() {
          try {
              PrintWriter printWriter = new PrintWriter(new FileWriter(this.i, false));
@@ -6491,7 +6664,7 @@ index e3654d2..ed68de6 100644
                  printWriter.println(string);
              }
              printWriter.close();
-@@ -189,7 +241,7 @@ public class ft {
+@@ -189,7 +251,7 @@ public class ft {
      private void h() {
          try {
              PrintWriter printWriter = new PrintWriter(new FileWriter(this.j, false));
@@ -6500,7 +6673,7 @@ index e3654d2..ed68de6 100644
                  printWriter.println(string);
              }
              printWriter.close();
-@@ -227,7 +279,7 @@ public class ft {
+@@ -227,7 +289,7 @@ public class ft {
      private void j() {
          try {
              PrintWriter printWriter = new PrintWriter(new FileWriter(this.k, false));
@@ -7668,7 +7841,7 @@ index 0a3ecfd..fe9d9da 100644
          dataOutputStream.writeShort(this.b);
          dataOutputStream.writeInt(this.c);
 diff --git a/baseline/net/minecraft/src/id.java b/ours/net/minecraft/src/id.java
-index cf6405b..b0fa372 100644
+index cf6405b..daa7094 100644
 --- a/baseline/net/minecraft/src/id.java
 +++ b/ours/net/minecraft/src/id.java
 @@ -3,6 +3,8 @@ package net.minecraft.src;
@@ -7998,7 +8171,7 @@ index cf6405b..b0fa372 100644
                  this.e.ad.a(n3, n4, n5, n6);
              }
          } else if (hd2.e == 3 && (d5 = (d4 = this.e.l - ((double)n3 + 0.5)) * d4 + (d3 = this.e.m - ((double)n4 + 0.5)) * d3 + (d2 = this.e.n - ((double)n5 + 0.5)) * d2) < 256.0) {
-@@ -171,6 +412,49 @@ implements ef {
+@@ -171,18 +412,86 @@ implements ef {
  
      public void a(fe fe2) {
          int n2;
@@ -8048,7 +8221,20 @@ index cf6405b..b0fa372 100644
          boolean bl2 = this.d.e.z = this.d.f.g(this.e.aq);
          int n3 = fe2.b;
          int n4 = fe2.c;
-@@ -180,9 +464,23 @@ implements ef {
+         int n5 = fe2.d;
+         int n6 = fe2.e;
++        // SECURITY: the place handler had no reach check (unlike dig). A client could send
++        // block coords millions away, forcing the server to load/generate that chunk on
++        // the main thread and save-evict others across a 32M-wide world — a remote
++        // lag + disk-fill DoS. Legit reach is ~5 blocks; 64 is generous headroom. Drop
++        // silently WITHOUT the resync below, since reading the target block would itself
++        // load the chunk we are refusing to touch.
++        double dcx = (double)n3 + 0.5 - this.e.l;
++        double dcz = (double)n5 + 0.5 - this.e.n;
++        if (n4 < 0 || n4 > 127 || dcx * dcx + dcz * dcz > 4096.0) {
++            return;
++        }
+         int n7 = (int)gj.e(n3 - this.d.e.n);
          if (n7 > (n2 = (int)gj.e(n5 - this.d.e.p))) {
              n2 = n7;
          }
@@ -8075,7 +8261,7 @@ index cf6405b..b0fa372 100644
          }
          this.e.a.b(new et(n3, n4, n5, this.d.e));
          this.d.e.z = false;
-@@ -203,24 +501,36 @@ implements ef {
+@@ -203,24 +512,36 @@ implements ef {
          this.b.a(hp2);
      }
  
@@ -8125,7 +8311,7 @@ index cf6405b..b0fa372 100644
      }
  
      public void a(ba ba2) {
-@@ -318,29 +628,107 @@ implements ef {
+@@ -318,29 +639,115 @@ implements ef {
          return this.e.aq;
      }
  
@@ -8194,6 +8380,14 @@ index cf6405b..b0fa372 100644
 +     * directions).
 +     */
      public void a(ib ib2) {
++        // SECURITY: ib.b (Y) is a signed short off the wire; dy.k does no Y-bounds check
++        // (unlike dy.a), so a negative Y indexes the chunk block array at -1 ->
++        // ArrayIndexOutOfBoundsException. That's caught by the pump now, but it still
++        // needlessly drops the connection, so reject out-of-range Y up front. Legit tile
++        // entities live at Y 0-127.
++        if (ib2.b < 0 || ib2.b >= 128) {
++            return;
++        }
          as as2 = this.d.e.k(ib2.a, ib2.b, ib2.c);
 -        if (as2 != null) {
 +        if (as2 instanceof ig) {
