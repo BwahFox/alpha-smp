@@ -1,5 +1,5 @@
 diff --git a/baseline/net/minecraft/server/MinecraftServer.java b/ours/net/minecraft/server/MinecraftServer.java
-index e7c980d..6db04bc 100644
+index e7c980d..b68411e 100644
 --- a/baseline/net/minecraft/server/MinecraftServer.java
 +++ b/ours/net/minecraft/server/MinecraftServer.java
 @@ -14,6 +14,8 @@ import java.util.List;
@@ -117,7 +117,7 @@ index e7c980d..6db04bc 100644
              ai ai2 = (ai)this.o.remove(0);
              String string = ai2.a;
              ef ef2 = ai2.b;
-@@ -252,8 +277,22 @@ Runnable {
+@@ -252,8 +277,23 @@ Runnable {
                  ef2.b("   op <player>               turns a player into an op");
                  ef2.b("   deop <player>             removes op status from a player");
                  ef2.b("   tp <player1> <player2>    moves one player to the same location as another player");
@@ -131,6 +131,7 @@ index e7c980d..6db04bc 100644
 +                ef2.b("   saddle                   toggle saddle on pigs within 8 blocks (tests packet 40)");
 +                ef2.b("   kill <mob|all> [radius]  remove matching entities near you (never players)");
 +                ef2.b("   breakfx [blockId]        block-break effect at your feet (tests packet 62)");
++                ef2.b("   badpainting              send yourself a packet 25 with a bogus art title (tests the client null-art guard)");
 +                ef2.b("   chest                     open a throwaway 27-slot window (tests packets 100-106)");
 +                ef2.b("   time [day|night|<n>]     show the clock, or advance it (never rewinds)");
 +                ef2.b("   ignite [radius]          set nearby entities on fire (tests the packet-40 fire flag)");
@@ -140,7 +141,7 @@ index e7c980d..6db04bc 100644
                  ef2.b("   stop                      gracefully stops the server");
                  ef2.b("   save-all                  forces a server-wide level save");
                  ef2.b("   save-off                  disables terrain saving (useful for backup scripts)");
-@@ -288,52 +327,52 @@ Runnable {
+@@ -288,52 +328,52 @@ Runnable {
                  continue;
              }
              if (string.toLowerCase().startsWith("op ")) {
@@ -216,7 +217,7 @@ index e7c980d..6db04bc 100644
                      object = ea2;
                  }
                  if (object != null) {
-@@ -341,7 +380,7 @@ Runnable {
+@@ -341,7 +381,7 @@ Runnable {
                      this.a(string2, "Kicking " + ((ea)object).aq);
                      continue;
                  }
@@ -225,7 +226,7 @@ index e7c980d..6db04bc 100644
                  continue;
              }
              if (string.toLowerCase().startsWith("tp ")) {
-@@ -361,7 +400,483 @@ Runnable {
+@@ -361,7 +401,506 @@ Runnable {
                      this.a(string2, "Teleporting " + stringArray[1] + " to " + stringArray[2] + ".");
                      continue;
                  }
@@ -528,6 +529,29 @@ index e7c980d..6db04bc 100644
 +                this.a(string2, "Break effect for block " + fxId + " at your feet.");
 +                continue;
 +            }
++            if (string.toLowerCase().startsWith("badpainting")) {
++                // SECURITY (3b) debug trigger: sends the ISSUER a packet 25 whose
++                // title matches no EnumArt — exactly what a hostile server could
++                // do. An unfixed client NPEs in EntityPainting.setDirection; a
++                // fixed one shows the fallback art (Kebab) at your feet. The
++                // painting is a client-side ghost (fixed fake entity id, never
++                // tracked server-side); reissuing replaces it, relog clears it.
++                ea dbgPaintingPlayer = this.f.h(string2);
++                if (dbgPaintingPlayer == null) {
++                    ef2.b("badpainting must be issued by a player in-game.");
++                    continue;
++                }
++                Packet25EntityPainting badPainting = new Packet25EntityPainting();
++                badPainting.entityId = Integer.MAX_VALUE - 2601;
++                badPainting.xPosition = gj.b(dbgPaintingPlayer.l);
++                badPainting.yPosition = gj.b(dbgPaintingPlayer.m);
++                badPainting.zPosition = gj.b(dbgPaintingPlayer.n);
++                badPainting.direction = 0;
++                badPainting.title = "NoSuchArtTitle";
++                dbgPaintingPlayer.a.b(badPainting);
++                this.a(string2, "Sent a bogus-title painting at your feet (unfixed clients crash here).");
++                continue;
++            }
 +            if (string.toLowerCase().startsWith("ignite")) {
 +                stringArray = string.split(" ");
 +                ea dbgIgnitePlayer = this.f.h(string2);
@@ -710,7 +734,7 @@ index e7c980d..6db04bc 100644
                  continue;
              }
              if (string.toLowerCase().startsWith("give ")) {
-@@ -443,7 +958,36 @@ Runnable {
+@@ -443,7 +982,36 @@ Runnable {
  
      public static void main(String[] stringArray) {
          try {
@@ -3996,7 +4020,7 @@ index a007926..c4163c2 100644
      }
  
 diff --git a/baseline/net/minecraft/src/bb.java b/ours/net/minecraft/src/bb.java
-index ef2df98..105f2c1 100644
+index ef2df98..038bc4c 100644
 --- a/baseline/net/minecraft/src/bb.java
 +++ b/ours/net/minecraft/src/bb.java
 @@ -1,5 +1,7 @@
@@ -4007,16 +4031,43 @@ index ef2df98..105f2c1 100644
  /*
   * Decompiled with CFR 0.152.
   */
-@@ -33,7 +35,7 @@ public class bb {
+@@ -32,8 +34,16 @@ public class bb {
+     private int r = 0;
      private int s = 0;
      private int t = 0;
- 
+-
 -    public bb(Socket socket, String string, ej ej2) {
++    // SECURITY (3b): per-connection inbound packet budget. Only touched by the
++    // read thread (f()), so no synchronization needed.
++    private long rateWindowStart = 0L;
++    private int rateWindowCount = 0;
++    // A legit alpha client peaks well under 100 packets/sec (movement is 20/s;
++    // digging/placing/clicks add bursts). 500/s is ~5x that headroom, but far
++    // below what a decode-amplification or expensive-op flood needs.
++    private static final int MAX_PACKETS_PER_SECOND = 500;
++
 +    public bb(Socket socket, String string, ej ej2) throws IOException {
          this.e = socket;
          this.l = ej2;
          socket.setTrafficClass(24);
-@@ -118,9 +120,15 @@ public class bb {
+@@ -113,14 +123,32 @@ public class bb {
+             try {
+                 hp hp2 = hp.b(this.f);
+                 if (hp2 != null) {
++                    // SECURITY (3b): count packets per 1s window; a connection
++                    // exceeding the budget is dropped before its packet is queued,
++                    // so a flood can't pile work onto the main-thread pump (dc.a()).
++                    long now = System.currentTimeMillis();
++                    if (now - this.rateWindowStart >= 1000L) {
++                        this.rateWindowStart = now;
++                        this.rateWindowCount = 0;
++                    }
++                    if (++this.rateWindowCount > MAX_PACKETS_PER_SECOND) {
++                        this.a("Flooding (more than " + MAX_PACKETS_PER_SECOND + " packets/sec)");
++                        return;
++                    }
+                     this.i.add(hp2);
+                 } else {
                      this.a("End of stream");
                  }
              }
