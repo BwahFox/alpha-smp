@@ -1,5 +1,5 @@
 diff --git a/baseline/net/minecraft/client/Minecraft.java b/ours/net/minecraft/client/Minecraft.java
-index b80a9e1..2a67eca 100644
+index b80a9e1..685be9e 100644
 --- a/baseline/net/minecraft/client/Minecraft.java
 +++ b/ours/net/minecraft/client/Minecraft.java
 @@ -11,6 +11,8 @@ import java.io.File;
@@ -11,7 +11,7 @@ index b80a9e1..2a67eca 100644
  import net.minecraft.src.EntityPlayerSP;
  import net.minecraft.src.EntityRenderer;
  import net.minecraft.src.EnumOS;
-@@ -117,6 +119,10 @@ public abstract class Minecraft implements Runnable {
+@@ -117,6 +119,18 @@ public abstract class Minecraft implements Runnable {
  	private TextureLavaFX textureLavaFX = new TextureLavaFX();
  	private static File minecraftDir = null;
  	public volatile boolean running = true;
@@ -19,10 +19,18 @@ index b80a9e1..2a67eca 100644
 +	public volatile long lastFrameHeartbeat;
 +	/** F7 debug menu opt-in: -Ddebug.menu=true on the java line (dev script sets it). */
 +	public static final boolean DEBUG_MENU_ENABLED = Boolean.getBoolean("debug.menu");
++	/**
++	 * This build's alpha-smp version — OUR project's version, not Minecraft's
++	 * (the game is and stays Alpha v1.1.2_01). Shown on the multiplayer screen and
++	 * sent to the server at login, which may refuse clients below its configured
++	 * minimum. Bump this and the server's copy together when cutting a release;
++	 * they are separate source trees and cannot share a constant.
++	 */
++	public static final String ALPHA_SMP_VERSION = "0.2.4";
  	public String debug = "";
  	long prevFrameTime = -1L;
  	public boolean inGameHasFocus = false;
-@@ -361,7 +367,18 @@ public abstract class Minecraft implements Runnable {
+@@ -361,7 +375,18 @@ public abstract class Minecraft implements Runnable {
  		}
  	}
  
@@ -41,7 +49,7 @@ index b80a9e1..2a67eca 100644
  		int var2 = GL11.glGetError();
  		if(var2 != 0) {
  			String var3 = GLU.gluErrorString(var2);
-@@ -415,12 +432,48 @@ public abstract class Minecraft implements Runnable {
+@@ -415,12 +440,48 @@ public abstract class Minecraft implements Runnable {
  			return;
  		}
  
@@ -90,7 +98,7 @@ index b80a9e1..2a67eca 100644
  					AxisAlignedBB.clearBoundingBoxPool();
  					Vec3D.initialize();
  					if(this.mcCanvas == null && Display.isCloseRequested()) {
-@@ -677,6 +730,7 @@ public abstract class Minecraft implements Runnable {
+@@ -677,6 +738,7 @@ public abstract class Minecraft implements Runnable {
  				ItemStack var9 = this.thePlayer.inventory.getCurrentItem();
  				if(var9 != null) {
  					var3 = var9.stackSize;
@@ -98,7 +106,7 @@ index b80a9e1..2a67eca 100644
  					ItemStack var10 = var9.useItemRightClick(this.theWorld, this.thePlayer);
  					if(var10 != var9 || var10 != null && var10.stackSize != var3) {
  						this.thePlayer.inventory.mainInventory[this.thePlayer.inventory.currentItem] = var10;
-@@ -870,12 +924,24 @@ public abstract class Minecraft implements Runnable {
+@@ -870,12 +932,24 @@ public abstract class Minecraft implements Runnable {
  													this.options.thirdPersonView = !this.options.thirdPersonView;
  												}
  
@@ -125,7 +133,7 @@ index b80a9e1..2a67eca 100644
  												}
  
  												if(this.isMultiplayerWorld() && Keyboard.getEventKey() == this.options.keyBindChat.keyCode) {
-@@ -1112,6 +1178,40 @@ public abstract class Minecraft implements Runnable {
+@@ -1112,6 +1186,40 @@ public abstract class Minecraft implements Runnable {
  	}
  
  	public void respawn() {
@@ -2587,10 +2595,10 @@ index 0cc6781..c0e4ecf 100644
  	protected void drawGuiContainerForegroundLayer() {
 diff --git a/ours/net/minecraft/src/GuiDebugMenu.java b/ours/net/minecraft/src/GuiDebugMenu.java
 new file mode 100644
-index 0000000..ac3324d
+index 0000000..7e7382c
 --- /dev/null
 +++ b/ours/net/minecraft/src/GuiDebugMenu.java
-@@ -0,0 +1,158 @@
+@@ -0,0 +1,262 @@
 +package net.minecraft.src;
 +
 +/**
@@ -2625,6 +2633,10 @@ index 0000000..ac3324d
 +		this.controlList.add(new GuiButton(8, this.width / 2 + 2, var1 + 104, 98, 20, "Saddled pig (SP)"));
 +		this.controlList.add(new GuiButton(10, this.width / 2 - 100, var1 + 128, 98, 20, "Slime (SP)"));
 +		this.controlList.add(new GuiButton(12, this.width / 2 - 100, var1 + 152, 98, 20, "Debug chest (SP)"));
++		this.controlList.add(new GuiButton(13, this.width / 2 - 100, var1 + 176, 98, 20, "Re-render (0,0)"));
++		this.controlList.add(new GuiButton(14, this.width / 2 + 2, var1 + 176, 98, 20, "Probe chunks"));
++		this.controlList.add(new GuiButton(15, this.width / 2 - 100, var1 + 200, 98, 20, "Re-render all"));
++		this.controlList.add(new GuiButton(16, this.width / 2 + 2, var1 + 200, 98, 20, "Smear trace: " + (RenderGlobal.SMEAR_TRACE ? "ON" : "off")));
 +		this.controlList.add(new GuiButton(9, this.width / 2 + 2, var1 + 152, 98, 20, "Back to game"));
 +	}
 +
@@ -2731,10 +2743,110 @@ index 0000000..ac3324d
 +			this.mc.displayGuiScreen(new GuiChest(var2.inventory, new InventoryBasic("Debug chest", 27)));
 +		}
 +
++		// SMEAR HUNT (2026-08-08): the chunk-column smear is always chunk (0,0).
++		// No multiplayer refusal on either of these — they only read world state
++		// and rebuild client-side display lists, so they create nothing other
++		// clients could miss.
++		//
++		// These split the hypothesis space in half by re-running a render from
++		// CURRENT world data: if the smear clears, the data was right all along
++		// and a render dirty-mark went missing; if it survives, the client's copy
++		// of the world is genuinely wrong there.
++		//
++		// Both only mark renderers dirty — they allocate no GL resources.
++		// RenderGlobal.loadRenderers() would be the sledgehammer version, but it
++		// tears down and reallocates every display list and occlusion query, and
++		// doing that mid-session segfaulted the nvidia driver outright
++		// (2026-08-08, SIGSEGV in libnvidia-glcore with no Java frames). Marking
++		// dirty is both safer and the more precise instrument.
++		if(var1.id == 13) {
++			System.out.println("[smear] marking chunk (0,0) for re-render from current world data");
++			this.mc.theWorld.markBlocksDirty(0, 0, 0, 15, 127, 15);
++			this.lastAction = "Marked (0,0) for re-render";
++			this.closeMenu();
++		}
++
++		// The interesting events all happen during the join, so this only pays off
++		// if you turn it on and THEN reconnect.
++		if(var1.id == 16) {
++			RenderGlobal.SMEAR_TRACE = !RenderGlobal.SMEAR_TRACE;
++			this.lastAction = "Smear trace " + (RenderGlobal.SMEAR_TRACE ? "ON - now RELOG to trace the join" : "off");
++			System.out.println("[smear] trace " + (RenderGlobal.SMEAR_TRACE ? "ON - relog to capture the join sequence" : "off"));
++			this.initGui();
++		}
++
++		if(var1.id == 15) {
++			System.out.println("[smear] marking every loaded renderer for re-render");
++			this.mc.renderGlobal.updateAllRenderers();
++			this.lastAction = "Marked every renderer for re-render";
++			this.closeMenu();
++		}
++
++		if(var1.id == 14) {
++			this.probeChunks();
++		}
++
 +		if(var1.id == 9) {
 +			this.closeMenu();
 +		}
 +
++	}
++
++	/**
++	 * SMEAR HUNT: report whether chunk (0,0) is real.
++	 *
++	 * The MP client hands out ONE shared placeholder chunk for every chunk it has
++	 * not loaded, and that placeholder is built at coordinates (0,0) — the same
++	 * coordinates as the real spawn chunk, so it cannot be told apart by asking
++	 * its position. It CAN be told apart by identity: ask for a chunk that
++	 * certainly is not loaded, and whatever comes back is the placeholder.
++	 *
++	 * Also counts non-air blocks inside the placeholder. It should be empty
++	 * forever; anything else means writes aimed at unloaded chunks are landing in
++	 * it, and every not-yet-loaded chunk then draws that garbage.
++	 */
++	private void probeChunks() {
++		World var1 = this.mc.theWorld;
++		EntityPlayerSP var2 = this.mc.thePlayer;
++		Chunk var3 = var1.getChunkFromChunkCoords(1000000, 1000000);
++		Chunk var4 = var1.getChunkFromChunkCoords(0, 0);
++		int var5 = MathHelper.floor_double(var2.posX) >> 4;
++		int var6 = MathHelper.floor_double(var2.posZ) >> 4;
++		boolean var7 = var4 == var3;
++		boolean var8 = var1.getChunkFromChunkCoords(var5, var6) == var3;
++		int var9 = 0;
++
++		for(int var10 = 0; var10 < 16; ++var10) {
++			for(int var11 = 0; var11 < 16; ++var11) {
++				for(int var12 = 0; var12 < 128; ++var12) {
++					if(var3.getBlockID(var10, var12, var11) != 0) {
++						++var9;
++					}
++				}
++			}
++		}
++
++		StringBuilder var13 = new StringBuilder();
++
++		for(int var14 = 0; var14 < 16; var14 += 5) {
++			for(int var15 = 0; var15 < 16; var15 += 5) {
++				int var16 = 127;
++
++				while(var16 > 0 && var1.getBlockId(var14, var16, var15) == 0) {
++					--var16;
++				}
++
++				var13.append("(").append(var14).append(",").append(var15).append(")y=").append(var16).append(" ");
++			}
++		}
++
++		System.out.println("[smear] chunk (0,0) is " + (var7 ? "NOT LOADED - resolving to the shared placeholder" : "loaded for real"));
++		System.out.println("[smear] player chunk (" + var5 + "," + var6 + ") is " + (var8 ? "NOT LOADED" : "loaded for real"));
++		System.out.println("[smear] placeholder chunk holds " + var9 + " non-air blocks (0 = clean, more = polluted by writes aimed at unloaded chunks)");
++		System.out.println("[smear] surface heights the world reports inside (0,0): " + var13);
++		System.out.println("[smear] renderers for (0,0): " + this.mc.renderGlobal.debugRendererColumn(0, 0));
++		System.out.println("[smear] renderers for the player's chunk: " + this.mc.renderGlobal.debugRendererColumn(MathHelper.floor_double(var2.posX), MathHelper.floor_double(var2.posZ)));
++		this.lastAction = "(0,0) " + (var7 ? "NOT LOADED" : "loaded") + ", placeholder pollution " + var9;
 +	}
 +
 +	public void drawScreen(int var1, int var2, float var3) {
@@ -3035,10 +3147,18 @@ index 0000000..0511be6
 +	}
 +}
 diff --git a/baseline/net/minecraft/src/GuiMultiplayer.java b/ours/net/minecraft/src/GuiMultiplayer.java
-index 49aea27..5e92484 100644
+index 49aea27..d3f398c 100644
 --- a/baseline/net/minecraft/src/GuiMultiplayer.java
 +++ b/ours/net/minecraft/src/GuiMultiplayer.java
-@@ -25,8 +25,23 @@ public class GuiMultiplayer extends GuiScreen {
+@@ -1,5 +1,7 @@
+ package net.minecraft.src;
+ 
++import net.minecraft.client.Minecraft;
++
+ public class GuiMultiplayer extends GuiScreen {
+ 	private GuiScreen parentScreen;
+ 	private int updateCounter = 0;
+@@ -25,8 +27,23 @@ public class GuiMultiplayer extends GuiScreen {
  			if(var1.id == 1) {
  				this.mc.displayGuiScreen(this.parentScreen);
  			} else if(var1.id == 0) {
@@ -3063,6 +3183,17 @@ index 49aea27..5e92484 100644
  			}
  
  		}
+@@ -67,6 +84,10 @@ public class GuiMultiplayer extends GuiScreen {
+ 	public void drawScreen(int var1, int var2, float var3) {
+ 		this.drawDefaultBackground();
+ 		this.drawCenteredString(this.fontRenderer, "Play Multiplayer", this.width / 2, this.height / 4 - 60 + 20, 16777215);
++		// Which alpha-smp build this client is. Servers can require a minimum, and
++		// the kick they send names a version — so the number has to be visible
++		// somewhere the player already is when they get refused.
++		this.drawCenteredString(this.fontRenderer, "alpha-smp " + Minecraft.ALPHA_SMP_VERSION, this.width / 2, this.height / 4 - 60 + 32, 8421504);
+ 		this.drawString(this.fontRenderer, "Minecraft Multiplayer is currently not finished, but there", this.width / 2 - 140, this.height / 4 - 60 + 60 + 0, 10526880);
+ 		this.drawString(this.fontRenderer, "is some buggy early testing going on.", this.width / 2 - 140, this.height / 4 - 60 + 60 + 9, 10526880);
+ 		this.drawString(this.fontRenderer, "Enter the IP of a server to connect to it:", this.width / 2 - 140, this.height / 4 - 60 + 60 + 36, 10526880);
 diff --git a/baseline/net/minecraft/src/GuiScreen.java b/ours/net/minecraft/src/GuiScreen.java
 index dfe255f..6d2876c 100644
 --- a/baseline/net/minecraft/src/GuiScreen.java
@@ -3463,7 +3594,7 @@ index c6514f8..e03cbdf 100644
  	}
  }
 diff --git a/baseline/net/minecraft/src/NetClientHandler.java b/ours/net/minecraft/src/NetClientHandler.java
-index a015570..70341e5 100644
+index a015570..afc0dcc 100644
 --- a/baseline/net/minecraft/src/NetClientHandler.java
 +++ b/ours/net/minecraft/src/NetClientHandler.java
 @@ -6,6 +6,7 @@ import java.io.InputStreamReader;
@@ -3534,7 +3665,22 @@ index a015570..70341e5 100644
  		if(var8 != null) {
  			((Entity)var8).serverPosX = var1.xPosition;
  			((Entity)var8).serverPosY = var1.yPosition;
-@@ -244,6 +291,12 @@ public class NetClientHandler extends NetHandler {
+@@ -200,6 +247,14 @@ public class NetClientHandler extends NetHandler {
+ 	}
+ 
+ 	public void handleMapChunk(Packet51MapChunk var1) {
++		// SMEAR HUNT (2026-08-08): note when block data covering chunk (0,0) lands.
++		// Everything after this point should end in a geometry rebuild for (0,0).
++		if(RenderGlobal.SMEAR_TRACE && var1.xPosition >> 4 <= 0 && var1.xPosition + var1.xSize - 1 >> 4 >= 0
++				&& var1.zPosition >> 4 <= 0 && var1.zPosition + var1.zSize - 1 >> 4 >= 0) {
++			System.out.println("[smear] (0,0) DATA arrived (origin " + var1.xPosition + "," + var1.yPosition + "," + var1.zPosition
++				+ " size " + var1.xSize + "x" + var1.ySize + "x" + var1.zSize + ")");
++		}
++
+ 		this.worldClient.invalidateBlockReceiveRegion(var1.xPosition, var1.yPosition, var1.zPosition, var1.xPosition + var1.xSize - 1, var1.yPosition + var1.ySize - 1, var1.zPosition + var1.zSize - 1);
+ 		this.worldClient.setChunkData(var1.xPosition, var1.yPosition, var1.zPosition, var1.xSize, var1.ySize, var1.zSize, var1.chunkData);
+ 	}
+@@ -244,6 +299,12 @@ public class NetClientHandler extends NetHandler {
  
  	}
  
@@ -3547,7 +3693,7 @@ index a015570..70341e5 100644
  	public void handleBlockItemSwitch(Packet16BlockItemSwitch var1) {
  		Entity var2 = this.worldClient.getEntityByID(var1.entityId);
  		if(var2 != null) {
-@@ -274,17 +327,21 @@ public class NetClientHandler extends NetHandler {
+@@ -274,17 +335,21 @@ public class NetClientHandler extends NetHandler {
  		this.mc.thePlayer.inventory.addItemStackToInventory(new ItemStack(var1.itemID, var1.count, var1.itemDamage));
  	}
  
@@ -3561,7 +3707,7 @@ index a015570..70341e5 100644
  	public void handleHandshake(Packet2Handshake var1) {
  		if(var1.username.equals("-")) {
 -			this.addToSendQueue(new Packet1Login(this.mc.session.username, "Password", 2));
-+			this.addToSendQueue(new Packet1Login(this.mc.session.username, "Password", PROTOCOL_VERSION));
++			this.addToSendQueue(new Packet1Login(this.mc.session.username, Minecraft.ALPHA_SMP_VERSION, PROTOCOL_VERSION));
  		} else {
  			try {
 -				URL var2 = new URL("http://www.minecraft.net/game/joinserver.jsp?user=" + this.mc.session.username + "&sessionId=" + this.mc.session.sessionId + "&serverId=" + var1.username);
@@ -3571,11 +3717,11 @@ index a015570..70341e5 100644
 +				String var4 = this.sessionServerJoin(var1.username);
  				if(var4.equalsIgnoreCase("ok")) {
 -					this.addToSendQueue(new Packet1Login(this.mc.session.username, "Password", 2));
-+					this.addToSendQueue(new Packet1Login(this.mc.session.username, "Password", PROTOCOL_VERSION));
++					this.addToSendQueue(new Packet1Login(this.mc.session.username, Minecraft.ALPHA_SMP_VERSION, PROTOCOL_VERSION));
  				} else {
  					this.netManager.networkShutdown("Failed to login: " + var4);
  				}
-@@ -296,6 +353,37 @@ public class NetClientHandler extends NetHandler {
+@@ -296,6 +361,37 @@ public class NetClientHandler extends NetHandler {
  
  	}
  
@@ -3613,7 +3759,7 @@ index a015570..70341e5 100644
  	public void disconnect() {
  		this.disconnected = true;
  		this.netManager.networkShutdown("Closed");
-@@ -320,18 +408,306 @@ public class NetClientHandler extends NetHandler {
+@@ -320,18 +416,306 @@ public class NetClientHandler extends NetHandler {
  		this.mc.theWorld.setWorldTime(var1.time);
  	}
  
@@ -5542,6 +5688,115 @@ index 967bb75..31c9303 100644
  			this.renderEntityOnFire(var1, var2, var4, var6, var9);
  		}
  
+diff --git a/baseline/net/minecraft/src/RenderGlobal.java b/ours/net/minecraft/src/RenderGlobal.java
+index fdbe1ce..0832f37 100644
+--- a/baseline/net/minecraft/src/RenderGlobal.java
++++ b/ours/net/minecraft/src/RenderGlobal.java
+@@ -981,6 +981,9 @@ public class RenderGlobal implements IWorldAccess {
+ 		int var10 = MathHelper.bucketInt(var4, 16);
+ 		int var11 = MathHelper.bucketInt(var5, 16);
+ 		int var12 = MathHelper.bucketInt(var6, 16);
++		if(SMEAR_TRACE && var7 <= 0 && var10 >= 0 && var9 <= 0 && var12 >= 0) {
++			System.out.println("[smear] (0,0) MARKED for re-render (block range x " + var1 + ".." + var4 + ", z " + var3 + ".." + var6 + ")");
++		}
+ 
+ 		for(int var13 = var7; var13 <= var10; ++var13) {
+ 			int var14 = var13 % this.renderChunksWide;
+@@ -1095,6 +1098,94 @@ public class RenderGlobal implements IWorldAccess {
+ 
+ 	}
+ 
++	/**
++	 * SMEAR HUNT (2026-08-08): when true, the four events that decide whether a
++	 * chunk column is drawn from fresh data are traced to stdout for chunk (0,0)
++	 * — the column the smear always lands on. The healthy join sequence is
++	 * preChunk LOAD, then map-chunk data, then a dirty mark, then a geometry
++	 * rebuild. A smear means one of the last two never happened, and the trace
++	 * says which.
++	 *
++	 * Tied to debug mode (-Ddebug.menu=true, the same opt-in that adds the F7
++	 * menu), so a normal player's build stays silent while a debug build traces
++	 * every join without anyone having to remember to switch it on first. That
++	 * matters: the events worth catching happen DURING the join that produces a
++	 * smear, and by the time you notice one, relogging to enable tracing would
++	 * have cleared it. The F7 button still toggles it live.
++	 */
++	public static boolean SMEAR_TRACE = Minecraft.DEBUG_MENU_ENABLED;
++
++	/**
++	 * SMEAR HUNT (2026-08-08): report, for one chunk column, which renderers the
++	 * dirty-marking math targets and where those renderers actually sit.
++	 *
++	 * The renderer array is a fixed grid that WRAPS around the player: the slot
++	 * for a chunk is its chunk coordinate modulo the grid size. markBlocksForUpdate
++	 * picks a slot by that modulo alone and never checks that the renderer parked
++	 * there is really covering the chunk being marked. If the grid has since been
++	 * re-centred (markRenderersForNewPosition), the slot can be drawing somewhere
++	 * else entirely — the dirty mark then lands on the wrong renderer and the
++	 * requested column keeps whatever geometry it last built. That is what a
++	 * stale smear looks like from the inside.
++	 *
++	 * "ok" means the targeted renderer really covers the column. "WRONG" means the
++	 * mark would be delivered to a renderer drawing another part of the world.
++	 */
++	public String debugRendererColumn(int var1, int var2) {
++		int var3 = var1 & ~15;
++		int var4 = var2 & ~15;
++		int var5 = MathHelper.bucketInt(var1, 16) % this.renderChunksWide;
++		if(var5 < 0) {
++			var5 += this.renderChunksWide;
++		}
++
++		int var6 = MathHelper.bucketInt(var2, 16) % this.renderChunksDeep;
++		if(var6 < 0) {
++			var6 += this.renderChunksDeep;
++		}
++
++		StringBuilder var7 = new StringBuilder();
++		int var8 = 0;
++
++		for(int var9 = 0; var9 < this.renderChunksTall; ++var9) {
++			WorldRenderer var10 = this.worldRenderers[(var6 * this.renderChunksTall + var9) * this.renderChunksWide + var5];
++			if(var10.posX == var3 && var10.posZ == var4 && var10.posY == var9 * 16) {
++				++var8;
++			} else {
++				var7.append("y").append(var9 * 16).append("->WRONG(renderer is at ").append(var10.posX).append(",").append(var10.posY).append(",").append(var10.posZ).append(") ");
++			}
++		}
++
++		// Does a renderer covering this column exist ANYWHERE in the grid? If one
++		// does but the modulo math points elsewhere, the mark is being misrouted.
++		int var11 = 0;
++
++		for(int var12 = 0; var12 < this.worldRenderers.length; ++var12) {
++			if(this.worldRenderers[var12].posX == var3 && this.worldRenderers[var12].posZ == var4) {
++				++var11;
++			}
++		}
++
++		// Per-renderer state for the column. A stale renderer looks like:
++		// built (isInitialized) and considered finished (needsUpdate false) but
++		// isChunkLit false — i.e. it was built over data that had no skylight yet,
++		// which is also the exact state updateAllRenderers() refuses to refresh.
++		StringBuilder var13 = new StringBuilder();
++
++		for(int var14 = 0; var14 < this.renderChunksTall; ++var14) {
++			WorldRenderer var15 = this.worldRenderers[(var6 * this.renderChunksTall + var14) * this.renderChunksWide + var5];
++			var13.append("y").append(var14 * 16).append("[")
++				.append(var15.isInitialized ? "built" : "UNBUILT")
++				.append(var15.needsUpdate ? ",dirty" : "")
++				.append(var15.isChunkLit ? ",lit" : ",UNLIT")
++				.append("] ");
++		}
++
++		return var8 + "/" + this.renderChunksTall + " targeted renderers really cover the column; "
++			+ var11 + " renderers in the whole grid sit on it (8 is correct; 0 or 16 means the grid wrap is broken). "
++			+ (var7.length() == 0 ? "routing all ok. " : var7.toString()) + "state: " + var13;
++	}
++
+ 	public void updateAllRenderers() {
+ 		for(int var1 = 0; var1 < this.worldRenderers.length; ++var1) {
+ 			if(this.worldRenderers[var1].isChunkLit) {
 diff --git a/baseline/net/minecraft/src/RenderPlayer.java b/ours/net/minecraft/src/RenderPlayer.java
 index 3f42460..90b8810 100644
 --- a/baseline/net/minecraft/src/RenderPlayer.java
@@ -6059,7 +6314,7 @@ index ecc1bba..e9a1abb 100644
  				System.out.println("Player count: " + this.playerEntities.size());
  			}
 diff --git a/baseline/net/minecraft/src/WorldClient.java b/ours/net/minecraft/src/WorldClient.java
-index 5bf8f0b..add0cf2 100644
+index 5bf8f0b..cba8fd1 100644
 --- a/baseline/net/minecraft/src/WorldClient.java
 +++ b/ours/net/minecraft/src/WorldClient.java
 @@ -2,6 +2,7 @@ package net.minecraft.src;
@@ -6168,7 +6423,19 @@ index 5bf8f0b..add0cf2 100644
  			}
  		}
  
-@@ -123,13 +182,34 @@ public class WorldClient extends World {
+@@ -84,6 +143,11 @@ public class WorldClient extends World {
+ 	}
+ 
+ 	public void doPreChunk(int var1, int var2, boolean var3) {
++		// SMEAR HUNT (2026-08-08): chunk (0,0) is where the smear always lands.
++		if(RenderGlobal.SMEAR_TRACE && var1 == 0 && var2 == 0) {
++			System.out.println("[smear] (0,0) preChunk " + (var3 ? "LOAD" : "UNLOAD") + " at worldTime " + this.worldTime);
++		}
++
+ 		if(var3) {
+ 			this.clientChunkProvider.loadChunk(var1, var2);
+ 		} else {
+@@ -123,13 +187,34 @@ public class WorldClient extends World {
  
  	protected void releaseEntitySkin(Entity var1) {
  		super.releaseEntitySkin(var1);
@@ -6204,3 +6471,31 @@ index 5bf8f0b..add0cf2 100644
  		this.entityList.add(var2);
  		if(!this.spawnEntityInWorld(var2)) {
  			this.entitySpawnQueue.add(var2);
+diff --git a/baseline/net/minecraft/src/WorldRenderer.java b/ours/net/minecraft/src/WorldRenderer.java
+index 92f91f6..20217fe 100644
+--- a/baseline/net/minecraft/src/WorldRenderer.java
++++ b/ours/net/minecraft/src/WorldRenderer.java
+@@ -35,7 +35,8 @@ public class WorldRenderer {
+ 	public boolean isWaitingOnOcclusionQuery;
+ 	public int glOcclusionQuery;
+ 	public boolean isChunkLit;
+-	private boolean isInitialized = false;
++	// public so the F7 smear probe can report it alongside needsUpdate/isChunkLit
++	public boolean isInitialized = false;
+ 	public List tileEntityRenderers = new ArrayList();
+ 	private List tileEntities;
+ 
+@@ -80,6 +81,13 @@ public class WorldRenderer {
+ 
+ 	public void updateRenderer() {
+ 		if(this.needsUpdate) {
++			// SMEAR HUNT (2026-08-08): the moment (0,0)'s geometry is actually
++			// rebuilt from world data. If a smear is on screen and this line never
++			// appeared after the data arrived, the dirty mark was lost.
++			if(RenderGlobal.SMEAR_TRACE && this.posX == 0 && this.posZ == 0) {
++				System.out.println("[smear] (0,0) geometry REBUILT at y=" + this.posY);
++			}
++
+ 			++chunksUpdated;
+ 			int var1 = this.posX;
+ 			int var2 = this.posY;

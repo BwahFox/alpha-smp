@@ -1,5 +1,5 @@
 diff --git a/baseline/net/minecraft/server/MinecraftServer.java b/ours/net/minecraft/server/MinecraftServer.java
-index e7c980d..b5e8b08 100644
+index e7c980d..9604798 100644
 --- a/baseline/net/minecraft/server/MinecraftServer.java
 +++ b/ours/net/minecraft/server/MinecraftServer.java
 @@ -14,6 +14,8 @@ import java.util.List;
@@ -11,18 +11,62 @@ index e7c980d..b5e8b08 100644
  public class MinecraftServer
  implements ef,
  Runnable {
-@@ -32,6 +34,10 @@ Runnable {
+@@ -32,6 +34,46 @@ Runnable {
      private List o = Collections.synchronizedList(new ArrayList());
      public fw k;
      public boolean l;
 +    /** blocks around spawn where non-ops cannot build; 0 disables. server.properties: spawn-protection */
 +    public int spawnProtectionRadius = 16;
++    /**
++     * This build's alpha-smp version — OUR project's version, NOT Minecraft's
++     * (the game is and stays alpha 0.2.1, which is what the startup banner below
++     * reports). Clients report their own copy of this at login and the server can
++     * refuse anything below `min-client-version`. Bump this and the client's copy
++     * together when cutting a release; separate source trees, no shared constant.
++     */
++    public static final String ALPHA_SMP_VERSION = "0.2.4";
++    /**
++     * Lowest client alpha-smp version allowed to log in; empty disables the check
++     * (the default, so stock and older clients keep working until an owner opts
++     * in). server.properties: min-client-version
++     */
++    public String minClientVersion = "";
++    /** what counts as a version on the wire and in server.properties: dotted numbers, bounded */
++    public static final java.util.regex.Pattern VERSION_PATTERN = java.util.regex.Pattern.compile("[0-9]{1,4}(\\.[0-9]{1,4}){0,3}");
++
++    /**
++     * Compare dotted numeric versions: negative if a is older than b, 0 if equal,
++     * positive if newer. Missing components count as zero, so "0.2" == "0.2.0",
++     * and components compare NUMERICALLY — "0.2.10" is newer than "0.2.9", which
++     * a plain string compare would get backwards. Both arguments must already
++     * have passed VERSION_PATTERN.
++     */
++    public static int compareVersions(String string, String string2) {
++        String[] stringArray = string.split("\\.");
++        String[] stringArray2 = string2.split("\\.");
++        int n2 = Math.max(stringArray.length, stringArray2.length);
++        for (int i2 = 0; i2 < n2; ++i2) {
++            int n3 = i2 < stringArray.length ? Integer.parseInt(stringArray[i2]) : 0;
++            int n4 = i2 < stringArray2.length ? Integer.parseInt(stringArray2[i2]) : 0;
++            if (n3 == n4) continue;
++            return n3 < n4 ? -1 : 1;
++        }
++        return 0;
++    }
 +    /** set when the run loop dies on a Throwable, so the exit code can reflect it */
 +    private boolean crashed = false;
  
      public MinecraftServer() {
          new bp(this);
-@@ -52,12 +58,12 @@ Runnable {
+@@ -43,6 +85,7 @@ Runnable {
+         bn2.start();
+         fk.a();
+         a.info("Starting minecraft server version 0.2.1");
++        a.info("alpha-smp " + ALPHA_SMP_VERSION);
+         if (Runtime.getRuntime().maxMemory() / 1024L / 1024L < 512L) {
+             a.warning("**** NOT ENOUGH RAM!");
+             a.warning("To start the server with more ram, launch it as \"java -Xmx1024M -Xms1024M -jar minecraft_server.jar\"");
+@@ -52,12 +95,12 @@ Runnable {
          String string = this.d.a("server-ip", "");
          this.l = this.d.a("online-mode", true);
          InetAddress inetAddress = null;
@@ -38,7 +82,7 @@ index e7c980d..b5e8b08 100644
              this.c = new dc(this, inetAddress, n2);
          }
          catch (IOException iOException) {
-@@ -85,7 +91,13 @@ Runnable {
+@@ -85,7 +128,26 @@ Runnable {
          a.info("Preparing start region");
          this.e = new ee(new File("."), string, this.d.a("monsters", false));
          this.e.a(new eb(this));
@@ -50,10 +94,23 @@ index e7c980d..b5e8b08 100644
 +        // radius around spawn where non-ops cannot build or dig. Vanilla hardcoded 16
 +        // in two places in NetServerHandler; 0 disables it entirely.
 +        this.spawnProtectionRadius = this.d.a("spawn-protection", 16);
++        // Lowest client build allowed in. Empty = accept anything, which is the
++        // default so existing setups are unaffected until an owner opts in.
++        this.minClientVersion = this.d.a("min-client-version", "").trim();
++        if (this.minClientVersion.length() > 0 && !VERSION_PATTERN.matcher(this.minClientVersion).matches()) {
++            // Validated here, once, rather than at every login — otherwise a typo in
++            // server.properties would throw NumberFormatException inside the login
++            // handler for every connecting player.
++            a.warning("min-client-version \"" + this.minClientVersion + "\" is not a dotted number - ignoring it");
++            this.minClientVersion = "";
++        }
++        if (this.minClientVersion.length() > 0) {
++            a.info("Requiring alpha-smp client " + this.minClientVersion + " or newer");
++        }
          this.f.a(this.e);
          int n2 = 10;
          for (int i2 = -n2; i2 <= n2; ++i2) {
-@@ -169,30 +181,42 @@ Runnable {
+@@ -169,30 +231,42 @@ Runnable {
                  }
              }
          }
@@ -109,7 +166,7 @@ index e7c980d..b5e8b08 100644
              int n3 = (Integer)b.get(string);
              if (n3 > 0) {
                  b.put(string, n3 - 1);
-@@ -235,6 +259,7 @@ Runnable {
+@@ -235,6 +309,7 @@ Runnable {
          while (this.o.size() > 0) {
              Object object;
              String[] stringArray;
@@ -117,7 +174,7 @@ index e7c980d..b5e8b08 100644
              ai ai2 = (ai)this.o.remove(0);
              String string = ai2.a;
              ef ef2 = ai2.b;
-@@ -252,13 +277,29 @@ Runnable {
+@@ -252,13 +327,30 @@ Runnable {
                  ef2.b("   op <player>               turns a player into an op");
                  ef2.b("   deop <player>             removes op status from a player");
                  ef2.b("   tp <player1> <player2>    moves one player to the same location as another player");
@@ -144,10 +201,11 @@ index e7c980d..b5e8b08 100644
                  ef2.b("   save-on                   re-enables terrain saving");
                  ef2.b("   list                      lists all currently connected players");
 +                ef2.b("   whitelist on|off|add <p>|remove <p>|list|reload   optional whitelist (off by default; ops always bypass)");
++                ef2.b("   minclient <version>|off   lowest alpha-smp client allowed to join (off by default)");
                  ef2.b("   say <message>             broadcasts a message to all players");
                  continue;
              }
-@@ -288,52 +329,99 @@ Runnable {
+@@ -288,52 +380,124 @@ Runnable {
                  continue;
              }
              if (string.toLowerCase().startsWith("op ")) {
@@ -188,6 +246,31 @@ index e7c980d..b5e8b08 100644
 +                stringArg = string.substring(string.indexOf(" ")).trim();
 +                this.f.d(stringArg);
 +                this.a(string2, "Pardoning ip " + stringArg);
++                continue;
++            }
++            if (string.toLowerCase().startsWith("minclient")) {
++                // Raise or drop the client-build floor without a restart, and persist
++                // it (server.properties: min-client-version) so it survives one.
++                stringArray = string.trim().split(" +");
++                if (stringArray.length < 2) {
++                    ef2.b("Minimum client version: " + (this.minClientVersion.length() == 0 ? "not enforced" : this.minClientVersion)
++                        + " (this server is alpha-smp " + ALPHA_SMP_VERSION + "). Syntax: minclient <version>|off");
++                    continue;
++                }
++                String minArg = stringArray[1];
++                if (minArg.equalsIgnoreCase("off") || minArg.equals("0")) {
++                    this.minClientVersion = "";
++                    this.d.setProperty("min-client-version", "");
++                    this.a(string2, "Client version requirement removed");
++                    continue;
++                }
++                if (!VERSION_PATTERN.matcher(minArg).matches()) {
++                    ef2.b("Not a dotted version number: " + minArg);
++                    continue;
++                }
++                this.minClientVersion = minArg;
++                this.d.setProperty("min-client-version", minArg);
++                this.a(string2, "Now requiring alpha-smp client " + minArg + " or newer");
 +                continue;
 +            }
 +            if (string.toLowerCase().startsWith("whitelist")) {
@@ -270,7 +353,7 @@ index e7c980d..b5e8b08 100644
                      object = ea2;
                  }
                  if (object != null) {
-@@ -341,7 +429,7 @@ Runnable {
+@@ -341,7 +505,7 @@ Runnable {
                      this.a(string2, "Kicking " + ((ea)object).aq);
                      continue;
                  }
@@ -279,7 +362,7 @@ index e7c980d..b5e8b08 100644
                  continue;
              }
              if (string.toLowerCase().startsWith("tp ")) {
-@@ -361,7 +449,506 @@ Runnable {
+@@ -361,7 +525,506 @@ Runnable {
                      this.a(string2, "Teleporting " + stringArray[1] + " to " + stringArray[2] + ".");
                      continue;
                  }
@@ -787,7 +870,7 @@ index e7c980d..b5e8b08 100644
                  continue;
              }
              if (string.toLowerCase().startsWith("give ")) {
-@@ -443,7 +1030,36 @@ Runnable {
+@@ -443,7 +1106,36 @@ Runnable {
  
      public static void main(String[] stringArray) {
          try {
@@ -6247,7 +6330,7 @@ index 7e6886c..35ecf52 100644
  
      protected String d() {
 diff --git a/baseline/net/minecraft/src/ew.java b/ours/net/minecraft/src/ew.java
-index eb71aab..1360497 100644
+index eb71aab..fe50338 100644
 --- a/baseline/net/minecraft/src/ew.java
 +++ b/ours/net/minecraft/src/ew.java
 @@ -1,5 +1,7 @@
@@ -6258,16 +6341,30 @@ index eb71aab..1360497 100644
  /*
   * Decompiled with CFR 0.152.
   */
-@@ -20,7 +22,7 @@ extends ej {
+@@ -19,8 +21,21 @@ extends ej {
+     private String g = null;
      private z h = null;
      private String i = "";
++    /** the client's reported alpha-smp version, already sanitised; "" if it did not report one */
++    private String clientVersion = "";
++
++    /**
++     * The client's reported version, or "" if absent or not a plain dotted number.
++     * SECURITY: this string is client-controlled and reaches the server log and a
++     * kick message, so anything that is not digits-and-dots is dropped rather than
++     * echoed — no forged log lines, no control characters. Pre-versioning clients
++     * (which sent the literal "Password") land here too and read as "unknown".
++     */
++    private static String clientVersionOf(String string) {
++        return string != null && MinecraftServer.VERSION_PATTERN.matcher(string).matches() ? string : "";
++    }
  
 -    public ew(MinecraftServer minecraftServer, Socket socket, String string) {
 +    public ew(MinecraftServer minecraftServer, Socket socket, String string) throws IOException {
          this.e = minecraftServer;
          this.b = new bb(socket, string, this);
      }
-@@ -55,10 +57,24 @@ extends ej {
+@@ -55,10 +70,38 @@ extends ej {
  
      public void a(z z2) {
          this.g = z2.b;
@@ -6290,12 +6387,29 @@ index eb71aab..1360497 100644
 +            this.b("Invalid username!");
 +            return;
 +        }
++        // Client build floor. SERVER-enforced, like every other login gate here: the
++        // client only REPORTS its version (in the login packet's vestigial password
++        // field, which vanilla never used and ft.a ignores) and the server alone
++        // decides. A client can of course lie about the number — this is a
++        // compatibility check, not a security boundary, and nothing downstream trusts
++        // it. Off unless the owner sets min-client-version.
++        String clientVersion = ew.clientVersionOf(z2.c);
++        if (this.e.minClientVersion.length() > 0 && (clientVersion.length() == 0
++                || MinecraftServer.compareVersions(clientVersion, this.e.minClientVersion) < 0)) {
++            this.b("Outdated client (" + (clientVersion.length() == 0 ? "unknown version" : clientVersion)
++                + ")! This server needs alpha-smp " + this.e.minClientVersion + " or newer.");
++            return;
++        }
++        this.clientVersion = clientVersion;
          if (!this.e.l) {
              this.b(z2);
          } else {
-@@ -71,7 +87,13 @@ extends ej {
+@@ -69,9 +112,15 @@ extends ej {
+     public void b(z z2) {
+         ea ea2 = this.e.f.a(this, z2.b, z2.c);
          if (ea2 != null) {
-             a.info(this.b() + " logged in");
+-            a.info(this.b() + " logged in");
++            a.info(this.b() + " logged in (alpha-smp " + (this.clientVersion.length() == 0 ? "unknown" : this.clientVersion) + ")");
              id id2 = new id(this.e, this.b, ea2);
 -            id2.b(new z("", "", 0));
 +            // The int field of the login reply is unused by vanilla (it is the
