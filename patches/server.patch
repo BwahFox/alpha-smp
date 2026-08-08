@@ -4864,10 +4864,19 @@ index 1b3666c..c02352e 100644
                  a.log(Level.WARNING, "Failed to handle packet: " + exception, exception);
              }
 diff --git a/baseline/net/minecraft/src/dd.java b/ours/net/minecraft/src/dd.java
-index 5e16a75..0bb922a 100644
+index 5e16a75..2811c48 100644
 --- a/baseline/net/minecraft/src/dd.java
 +++ b/ours/net/minecraft/src/dd.java
-@@ -20,12 +20,22 @@ extends Thread {
+@@ -6,6 +6,8 @@ package net.minecraft.src;
+ import java.io.BufferedReader;
+ import java.io.InputStreamReader;
+ import java.net.URL;
++import java.util.regex.Matcher;
++import java.util.regex.Pattern;
+ 
+ class dd
+ extends Thread {
+@@ -20,19 +22,41 @@ extends Thread {
      public void run() {
          try {
              String string = ew.a(this.b);
@@ -4886,13 +4895,33 @@ index 5e16a75..0bb922a 100644
 +                reply.append(line);
 +            }
              bufferedReader.close();
-+            String string2 = reply.toString();
-             System.out.println("THE REPLY IS " + string2);
+-            System.out.println("THE REPLY IS " + string2);
 -            if (string2.equals("YES")) {
-+            if (string2.contains("\"id\"")) {
++            String string2 = reply.toString();
++            // SECURITY: bind the authenticated identity to the CLAIMED username. hasJoined
++            // returns a profile ONLY if that exact username completed joinServer with our
++            // serverId, so the "name" in the response is the real, Mojang-verified identity.
++            // The old check accepted any 200 containing "id" and never compared names;
++            // require the returned profile name to match (case-insensitively) what the
++            // client claimed, and reject otherwise. The first "name" is the profile name
++            // (Mojang emits id, name, then properties — whose own "name":"textures" comes
++            // later, so first-match is the player). Also replaces the fragile substring
++            // scan and drops a debug println that logged the full profile (incl. UUID).
++            Matcher matcher = Pattern.compile("\"name\"\\s*:\\s*\"([^\"]+)\"").matcher(string2);
++            if (matcher.find() && matcher.group(1).equalsIgnoreCase(this.a.b)) {
                  ew.a(this.b, this.a);
              } else {
                  this.b.b("Failed to verify username!");
+             }
+         }
+         catch (Exception exception) {
++            // Was: print only, which left the connection hanging until the login timeout
++            // on any session-server hiccup. Drop it explicitly instead.
+             exception.printStackTrace();
++            this.b.b("Failed to verify username!");
+         }
+     }
+ }
 diff --git a/baseline/net/minecraft/src/df.java b/ours/net/minecraft/src/df.java
 index a09b14a..95779ac 100644
 --- a/baseline/net/minecraft/src/df.java
