@@ -1,5 +1,8 @@
 # Minecraft Alpha 1.1.2_01 SMP — parity patch set
 
+# 8/13/2026: ARCHIVED.
+I'm not comfortable with the fact that I used AI to make this. Development has been stalled until I can maintain it myself. Use at your own risk.
+
 # AI DISCLOSURE
 AI TOOLS SUCH AS CLAUDE CODE WERE HEAVILY USED IN THIS PROJECT. IF YOU ARE UNCOMFORTABLE WITH THAT, PLEASE AVOID USING THIS PROJECT.
 
